@@ -70,6 +70,6 @@ class CRNGraph:
                 sid = product.getSpecies()
                 self.sr.add_edge(reactionid, sid, type="product", stoichiometry=product.getStoichiometry())
             for modifier in reaction.getListOfModifiers():
-                sid = product.getSpecies()
+                sid = modifier.getSpecies()
                 self.sr.add_edge(sid,reactionid, type="modifier")
 
