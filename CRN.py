@@ -8,6 +8,7 @@ from Specie import *
 from Reaction import *
 from Parameter import *
 from Function import *
+from Rule import *
 
 from enum import Enum
 
@@ -31,6 +32,7 @@ class CRNGraph:
         self.parametersspecies = {} #map specieid -> Specie : for the constant species that acts like parameters
         self.parameters = {} #map identifier -> Parameter (global parameters)
         self.functions = {} # map functionID -> Function (for the functions defined in the sbml)
+        self.rules = {"assignment":{}, "rate":{}, "algebraic":{}}
  
         for compartment in sbml_mdl.getListOfCompartments():
             self.compartments[compartment.getId()] = Compartment(compartment)
@@ -49,11 +51,22 @@ class CRNGraph:
             else:
                 self.species[specieid] = s
 
+        for rule in sbml_mdl.getListOfRules():
+            if rule.isAssignment():
+                self.rules["assignment"][rule.getVariable()] = Rule(rule)
+            elif rule.isAlgebraic():
+                self.rules["algebraic"][rule.getIdAttribute()]=Rule(rule)
+            elif rule.isRate():
+                self.rules["rate"][rule.getIdAttribute()]=Rule(rule)
+            else:
+                raise ValueError ("Unimplemented rule managment")
+        print ("found ",len(self.rules["assignment"]), " assigment, ", len(self.rules["algebraic"])," algebraic, ", len(self.rules["rate"]), " rate.")
         #symbol map to rewrite expressions using unique symbols
         pdict = {sp.Function(sym.getId())():sym.symbol for sym in self.parameters.values()}
         cdict = {sp.Function(sym.getId())():sym.symbol for sym in self.compartments.values()}
         sdict = {sp.Function(sym.getId())():sym.symbol for sym in self.species.values()}
         spdict = {sp.Function(sym.getId())():sym.symbol for sym in self.parametersspecies.values()}
+        ruledict = {sp.Function(name)():rule.formula for name, rule in self.rules["assignment"].items()}
         symdict = pdict | cdict | sdict | spdict
 
 
@@ -61,7 +74,7 @@ class CRNGraph:
         for reaction in sbml_mdl.getListOfReactions():
             reactionid=reaction.getId()
             self.sr.add_node(reactionid, bipartite=VertexType.REACTION)
-            self.reactions[reactionid]=Reaction(reaction, self.functions, symdict)
+            self.reactions[reactionid]=Reaction(reaction, self.functions, symdict, self.rules)
 
             for reactant in reaction.getListOfReactants():
                 sid = reactant.getSpecies()

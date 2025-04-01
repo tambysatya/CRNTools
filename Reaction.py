@@ -10,7 +10,15 @@ import numbers
 import sympy2jax
 
 class Reaction(libsbml.Reaction):
-    def __init__ (self,reaction, functions, symdict):
+    def __init__ (self,reaction, functions, symdict, rules):
+        """
+            Inputs:
+                - the function list
+                - the dictionary containing the unique symbols
+                - the rules
+                
+
+        """
         super().__init__(reaction)
         self.localparameters = {}
         law = reaction.getKineticLaw()
