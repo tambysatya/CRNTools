@@ -74,7 +74,7 @@ class CRNGraph:
         for reaction in sbml_mdl.getListOfReactions():
             reactionid=reaction.getId()
             self.sr.add_node(reactionid, bipartite=VertexType.REACTION)
-            self.reactions[reactionid]=Reaction(reaction, self.functions, symdict, self.rules)
+            self.reactions[reactionid]=Reaction(reaction, self.functions, symdict, self.rules["assignment"])
 
             for reactant in reaction.getListOfReactants():
                 sid = reactant.getSpecies()

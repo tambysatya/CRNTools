@@ -10,7 +10,7 @@ import numbers
 import sympy2jax
 
 class Reaction(libsbml.Reaction):
-    def __init__ (self,reaction, functions, symdict, rules):
+    def __init__ (self,reaction, functions, symdict, assignmentrules):
         """
             Inputs:
                 - the function list
@@ -38,6 +38,7 @@ class Reaction(libsbml.Reaction):
         if not isinstance(self.symbolic_formula, numbers.Number):
             self.symbolic_formula = self.symbolic_formula.subs(localsymbs)
         self.expandFunctions(functions)
+        self.expandFunctions(assignmentrules)
         self.symbolic_formula = self.symbolic_formula.subs(symdict)
         self.kineticformula = sympy2jax.SymbolicModule([self.symbolic_formula])
 
