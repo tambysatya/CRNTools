@@ -86,3 +86,35 @@ class CRNGraph:
                 sid = modifier.getSpecies()
                 self.sr.add_edge(sid,reactionid, type="modifier")
 
+    def listParameters(self):
+        params = []
+        params += list(self.parameters.values())
+        for r in self.reactions.values():
+            params+= list(r.localparameters.values())
+        params += list (self.compartments.values())
+        params += list (self.parametersspecies.values())
+        return params
+
+    def rewrite(self):
+        odes = [specie.buildDifferentialEquation(self.sr,
+                                                 self.species | self.parametersspecies,
+                                                 self.reactions,
+                                                 self.compartments,
+                                                 symbolic=True) for specieid, specie in self.species.items()]
+        params = self.listParameters()
+        symbs = {}
+        i = 1
+        for p in params:
+            symbs[p.symbol] = sp.symbols("k"+str(i))
+            i = i+1
+        i=1
+        for s in self.species.values():
+            symbs[s.symbol] = sp.symbols("x"+str(i))
+            i = i+1
+
+        exprs = [ode.subs(symbs) for ode in odes]
+        for expr in exprs:
+            print (expr)
+
+            
+
