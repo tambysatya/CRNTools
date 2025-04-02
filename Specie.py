@@ -24,28 +24,30 @@ class Specie (libsbml.Species):
         me = self.getId()
 
         for reactionid in sr.predecessors(me): #reactions for which I am a product
-            reaction = reactions[reactionid]
-            coef = sr[reactionid][me]["stoichiometry"]
-            if symbolic == True:
-                term = coef*reaction.symbolic_formula
-            else:
-                term = coef*reaction.kineticformula
-            if reaction.getNumReactants() > 0:
-                reactantid = reaction.getReactant(0).getSpecies()
-                reactant = species[reactantid]
-                compartment = compartments[reactant.getCompartment()]
+            if sr[reactionid][me]["type"] == "product":
+                reaction = reactions[reactionid]
+                coef = sr[reactionid][me]["stoichiometry"]
                 if symbolic == True:
-                    term /= compartment.symbol
+                    term = coef*reaction.symbolic_formula
                 else:
-                    term /= compartment.val
-            expr += term
+                    term = coef*reaction.kineticformula
+                if reaction.getNumReactants() > 0:
+                    reactantid = reaction.getReactant(0).getSpecies()
+                    reactant = species[reactantid]
+                    compartment = compartments[reactant.getCompartment()]
+                    if symbolic == True:
+                        term /= compartment.symbol
+                    else:
+                        term /= compartment.val
+                expr += term
         for reactionid in sr.successors(me):
-            reaction = reactions[reactionid]
-            coef = sr[me][reactionid]["stoichiometry"]
-            if symbolic==True:
-                expr -= coef*reaction.symbolic_formula
-            else:
-                expr -= coef*reaction.kineticformula
+            if sr[me][reactionid]["type"] == "reactant":
+                reaction = reactions[reactionid]
+                coef = sr[me][reactionid]["stoichiometry"]
+                if symbolic==True:
+                    expr -= coef*reaction.symbolic_formula
+                else:
+                    expr -= coef*reaction.kineticformula
 
         return expr / vi
     
