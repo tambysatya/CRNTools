@@ -30,7 +30,7 @@ class Specie (libsbml.Species):
                 if symbolic == True:
                     term = coef*reaction.symbolic_formula
                 else:
-                    term = coef*reaction.kineticformula
+                    term = lambda x: coef*reaction.kineticformula(**x)
                 if reaction.getNumReactants() > 0:
                     reactantid = reaction.getReactant(0).getSpecies()
                     reactant = species[reactantid]
@@ -38,7 +38,7 @@ class Specie (libsbml.Species):
                     if symbolic == True:
                         term /= compartment.symbol
                     else:
-                        term /= compartment.val
+                        term = lambda x: term(x)/compartment.val
                 expr += term
         for reactionid in sr.successors(me):
             if sr[me][reactionid]["type"] == "reactant":
@@ -47,7 +47,7 @@ class Specie (libsbml.Species):
                 if symbolic==True:
                     expr -= coef*reaction.symbolic_formula
                 else:
-                    expr -= coef*reaction.kineticformula
+                    expr -=  lambda x: coef*reaction.kineticformula(x)
 
         return expr / vi
     

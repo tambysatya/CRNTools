@@ -40,7 +40,14 @@ class Reaction(libsbml.Reaction):
         self.expandFunctions(functions)
         self.expandFunctions(assignmentrules)
         self.symbolic_formula = self.symbolic_formula.subs(symdict)
-        self.kineticformula = sympy2jax.SymbolicModule([self.symbolic_formula])
+
+        try:
+            self.kineticformula = sympy2jax.SymbolicModule([self.symbolic_formula])
+        except KeyError as err:
+            print ("Error: unable to convert a symbolic expression to jax. Are the operations differentiable ?")
+            print ("Expression: ", err)
+            print ("Non-differentiable expression will be handled in a future version.")
+            raise
 
     def expandFunctions(self, functions):
         expression = self.symbolic_formula

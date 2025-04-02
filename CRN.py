@@ -2,17 +2,19 @@
 
 import libsbml
 
+from enum import Enum
 from astread import TIME_SYMBOL
 from Compartment import *
 from Specie import *
 from Reaction import *
 from Parameter import *
-from Function import *
 from Rule import *
 
-from enum import Enum
+from Function import *
 
 import networkx as nx
+import jax.numpy as jnp
+import jax
 
 
 class VertexType (Enum):
@@ -36,6 +38,7 @@ class CRNGraph:
  
         for compartment in sbml_mdl.getListOfCompartments():
             self.compartments[compartment.getId()] = Compartment(compartment)
+
         for function in sbml_mdl.getListOfFunctionDefinitions():
             self.functions[function.getId()] = Function(function)
 
@@ -60,7 +63,7 @@ class CRNGraph:
                 self.rules["rate"][rule.getIdAttribute()]=Rule(rule)
             else:
                 raise ValueError ("Unimplemented rule managment")
-        print ("found ",len(self.rules["assignment"]), " assigment, ", len(self.rules["algebraic"])," algebraic, ", len(self.rules["rate"]), " rate.")
+        print ("Rules found ",len(self.rules["assignment"]), " assigment, ", len(self.rules["algebraic"])," algebraic, ", len(self.rules["rate"]), " rate.")
         #symbol map to rewrite expressions using unique symbols
         pdict = {sp.Function(sym.getId())():sym.symbol for sym in self.parameters.values()}
         cdict = {sp.Function(sym.getId())():sym.symbol for sym in self.compartments.values()}
@@ -86,6 +89,26 @@ class CRNGraph:
                 sid = modifier.getSpecies()
                 self.sr.add_edge(sid,reactionid, type="modifier")
 
+        self.identifyConstantSpecies()
+        print (f"Found {len(self.species)} species, {len(self.parameters)} global parameters, {len(self.compartments)} compartments, {len(self.reactions)} reactions and {len(self.parametersspecies)} constant species.")
+        
+    def identifyConstantSpecies(self):
+        species = {}
+        for specieid, specie in self.species.items():
+            expr = specie.buildDifferentialEquation(self.sr, 
+                                                    self.species|self.parametersspecies,
+                                                    self.reactions, 
+                                                    self.compartments,
+                                                    symbolic=True)
+            if expr == 0:
+                self.parametersspecies[specieid] = specie
+            else:
+                species[specieid] = specie
+
+        self.species = species
+
+
+            
     def listParameters(self):
         params = []
         params += list(self.parameters.values())
@@ -116,5 +139,19 @@ class CRNGraph:
         for expr in exprs:
             print (expr)
 
-            
+    def generateODEs(self):
+        exprs = []
+        for specie in self.species.values():
+            expr = specie.buildDifferentialEquation(self.sr,
+                                                    self.species|self.parametersspecies,
+                                                    self.reactions,
+                                                    self.compartments,
+                                                    symbolic=False)
+            exprs.append(expr)
+        idx = jnp.arange(len(exprs)) 
+        vmap_functions = jax.vmap (lambda i,x: jax.lax.switch(i, exprs, x))
+        dict_function = lambda y, params: dict(zip(self.species.keys(), y)) | params
 
+        self.odes = lambda y, params: vmap_functions(idx, dict_function(y,params))
+        return self.odes
+            
