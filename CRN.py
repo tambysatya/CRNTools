@@ -35,18 +35,22 @@ class CRNGraph:
         self.parameters = {} #map identifier -> Parameter (global parameters)
         self.functions = {} # map functionID -> Function (for the functions defined in the sbml)
         self.rules = {"assignment":{}, "rate":{}, "algebraic":{}}
+
+        self.initialassignments = {}
+        for initialassignment in sbml_mdl.getListOfInitialAssignments():
+i           self.initialassignments[initialassignment.getSymbol()] = initialassignment
  
         for compartment in sbml_mdl.getListOfCompartments():
-            self.compartments[compartment.getId()] = Compartment(compartment)
+            self.compartments[compartment.getId()] = Compartment(compartment, initialassignments)
 
         for function in sbml_mdl.getListOfFunctionDefinitions():
             self.functions[function.getId()] = Function(function)
 
         for param in sbml_mdl.getListOfParameters():
-            self.parameters[param.getId()] = Parameter(param)
+            self.parameters[param.getId()] = Parameter(param, initialassignments)
 
         for specie in sbml_mdl.getListOfSpecies():
-            s = Specie(specie)
+            s = Specie(specie, initialassignments)
             specieid = s.getId()
             self.sr.add_node(specieid, bipartite=VertexType.SPECIE)
             if specie.getBoundaryCondition() or specie.getConstant():
@@ -155,6 +159,18 @@ class CRNGraph:
         self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
         return self.odes
     
+    def splitInitializedSet(self, entities):
+        """
+            Identifies which entities initial values depends from values of other entities
+        """
+        initialized, tocompute = [], {}
+        for e in entities:
+            if e.getId() in self.initialassignments:
+                tocompute[e.symbol] = self.initialassignments[e.getId()]
+            else:
+                initialized.append(e.symbol)
+        return initialized, tocompute
+
     def getY0(self):
         y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
         p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)

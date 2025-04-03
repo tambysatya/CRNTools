@@ -14,6 +14,7 @@ class Specie (libsbml.Species):
     def __init__ (self, specie):
         super().__init__(specie)
         self.symbol = sympy.Dummy()
+
         
         value = specie.getInitialConcentration()
         if math.isnan(value):
