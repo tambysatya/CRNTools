@@ -15,6 +15,7 @@ from Function import *
 import networkx as nx
 import jax.numpy as jnp
 import jax
+from astread import parse_expr
 
 
 class VertexType (Enum):
@@ -161,16 +162,24 @@ i           self.initialassignments[initialassignment.getSymbol()] = initialassi
     
     def splitInitializedSet(self, entities):
         """
-            Identifies which entities initial values depends from values of other entities
+            Identifies entities for which the initial value are functions of the initial values of other entities
         """
         initialized, tocompute = [], {}
+        g = nx.DiGraph()
+
         for e in entities:
             if e.getId() in self.initialassignments:
-                tocompute[e.symbol] = self.initialassignments[e.getId()]
+                tocompute[e.symbol] = parse_expr(self.initialassignments[e.getId()].getMath())
             else:
                 initialized.append(e.symbol)
+
+        for symb, expr in tocompute.items():
+            for atom in expressions.atoms
         return initialized, tocompute
 
+
+    #def _expandExpression(self, expression, macros):
+    #    for function in macros.values():
     def getY0(self):
         y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
         p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)
