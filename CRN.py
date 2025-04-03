@@ -98,8 +98,7 @@ class CRNGraph:
             expr = specie.buildDifferentialEquation(self.sr, 
                                                     self.species|self.parametersspecies,
                                                     self.reactions, 
-                                                    self.compartments,
-                                                    symbolic=True)
+                                                    self.compartments)
             if expr == 0:
                 self.parametersspecies[specieid] = specie
             else:
@@ -145,13 +144,18 @@ class CRNGraph:
             expr = specie.buildDifferentialEquation(self.sr,
                                                     self.species|self.parametersspecies,
                                                     self.reactions,
-                                                    self.compartments,
-                                                    symbolic=False)
+                                                    self.compartments)
             exprs.append(expr)
-        idx = jnp.arange(len(exprs)) 
-        vmap_functions = jax.vmap (lambda i,x: jax.lax.switch(i, exprs, x))
-        dict_function = lambda y, params: dict(zip(self.species.keys(), y)) | params
 
-        self.odes = lambda y, params: vmap_functions(idx, dict_function(y,params))
+        odes = sympy2jax.SymbolicModule(exprs)
+        ssymb = [str(specie.symbol)[1:] for specie in self.species.values()]
+        psymb = [str(param.symbol)[1:] for param in self.listParameters()]
+        dict_function = lambda y, params: dict(zip(ssymb, y)) | dict(zip(psymb,params))
+
+        self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
         return self.odes
-            
+    
+    def getY0(self):
+        y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
+        p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)
+        return y0,p0

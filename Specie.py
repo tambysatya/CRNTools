@@ -5,6 +5,9 @@ from astread import parse_expr
 import sympy
 import math
 
+import jax
+import jax.numpy as jnp
+
 
 
 class Specie (libsbml.Species):
@@ -14,40 +17,31 @@ class Specie (libsbml.Species):
         
         value = specie.getInitialConcentration()
         if math.isnan(value):
-            self.initialvalue = specie.getInitialAmount()
+            self.val = specie.getInitialAmount()
         else:
-            self.initialvalue = value
+            self.val = value
 
-    def buildDifferentialEquation (self, sr, species, reactions, compartments, symbolic=False):
+    def buildDifferentialEquation (self, sr, species, reactions, compartments):
         expr = 0
-        vi = compartments[self.getCompartment()].symbol
+        vi = compartments[self.getCompartment()]
         me = self.getId()
 
         for reactionid in sr.predecessors(me): #reactions for which I am a product
             if sr[reactionid][me]["type"] == "product":
                 reaction = reactions[reactionid]
                 coef = sr[reactionid][me]["stoichiometry"]
-                if symbolic == True:
-                    term = coef*reaction.symbolic_formula
-                else:
-                    term = lambda x: coef*reaction.kineticformula(**x)
+                term = coef*reaction.symbolic_formula
                 if reaction.getNumReactants() > 0:
                     reactantid = reaction.getReactant(0).getSpecies()
                     reactant = species[reactantid]
                     compartment = compartments[reactant.getCompartment()]
-                    if symbolic == True:
-                        term /= compartment.symbol
-                    else:
-                        term = lambda x: term(x)/compartment.val
-                expr += term
+                    expr += term*compartment.symbol
+
         for reactionid in sr.successors(me):
             if sr[me][reactionid]["type"] == "reactant":
                 reaction = reactions[reactionid]
                 coef = sr[me][reactionid]["stoichiometry"]
-                if symbolic==True:
-                    expr -= coef*reaction.symbolic_formula
-                else:
-                    expr -=  lambda x: coef*reaction.kineticformula(x)
+                expr -= coef*reaction.symbolic_formula
 
-        return expr / vi
+        return expr / vi.symbol
     
