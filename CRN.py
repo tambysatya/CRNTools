@@ -186,7 +186,8 @@ class CRNGraph:
             for atom in expr.atoms(sp.Symbol):
                 g.add_edge(atom, symb)
 
-        print ("Applying initialAssignments:")
+        if tocompute != {}:
+            print ("Applying initialAssignments:")
         while True:
             finished=True
             newtocompute = {}

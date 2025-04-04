@@ -16,11 +16,13 @@ class Specie (libsbml.Species):
         self.symbol = sympy.Dummy()
 
         
-        value = specie.getInitialConcentration()
-        if math.isnan(value):
+        if specie.isSetInitialConcentration():
+            self.val = specie.getInitialConcentration()
+        elif specie.isSetInitialAmount():
             self.val = specie.getInitialAmount()
         else:
-            self.val = max(value, self.getInitialAmount())
+            print ("WARNING: ", self.getId(), " has no initial amount nor concentration")
+            self.val=specie.getInitialConcentration()
 
     def buildDifferentialEquation (self, sr, species, reactions, compartments):
         expr = 0
