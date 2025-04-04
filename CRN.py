@@ -39,19 +39,19 @@ class CRNGraph:
 
         self.initialassignments = {}
         for initialassignment in sbml_mdl.getListOfInitialAssignments():
-i           self.initialassignments[initialassignment.getSymbol()] = initialassignment
+            self.initialassignments[initialassignment.getSymbol()] = initialassignment
  
         for compartment in sbml_mdl.getListOfCompartments():
-            self.compartments[compartment.getId()] = Compartment(compartment, initialassignments)
+            self.compartments[compartment.getId()] = Compartment(compartment)
 
         for function in sbml_mdl.getListOfFunctionDefinitions():
             self.functions[function.getId()] = Function(function)
 
         for param in sbml_mdl.getListOfParameters():
-            self.parameters[param.getId()] = Parameter(param, initialassignments)
+            self.parameters[param.getId()] = Parameter(param)
 
         for specie in sbml_mdl.getListOfSpecies():
-            s = Specie(specie, initialassignments)
+            s = Specie(specie)
             specieid = s.getId()
             self.sr.add_node(specieid, bipartite=VertexType.SPECIE)
             if specie.getBoundaryCondition() or specie.getConstant():
@@ -77,6 +77,8 @@ i           self.initialassignments[initialassignment.getSymbol()] = initialassi
         ruledict = {sp.Function(name)():rule.formula for name, rule in self.rules["assignment"].items()}
         symdict = pdict | cdict | sdict | spdict
 
+        self.symdict = symdict
+
 
 
         for reaction in sbml_mdl.getListOfReactions():
@@ -96,6 +98,8 @@ i           self.initialassignments[initialassignment.getSymbol()] = initialassi
 
         self.identifyConstantSpecies()
         print (f"Found {len(self.species)} species, {len(self.parameters)} global parameters, {len(self.compartments)} compartments, {len(self.reactions)} reactions and {len(self.parametersspecies)} constant species.")
+
+        self.getY0()
         
     def identifyConstantSpecies(self):
         species = {}
@@ -160,27 +164,79 @@ i           self.initialassignments[initialassignment.getSymbol()] = initialassi
         self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
         return self.odes
     
-    def splitInitializedSet(self, entities):
+    def initializesEntities (self, entities):
         """
             Identifies entities for which the initial value are functions of the initial values of other entities
         """
-        initialized, tocompute = [], {}
+        initialized, tocompute = {}, {}
         g = nx.DiGraph()
 
         for e in entities:
             if e.getId() in self.initialassignments:
-                tocompute[e.symbol] = parse_expr(self.initialassignments[e.getId()].getMath())
+                expr = parse_expr(self.initialassignments[e.getId()].getMath())
+                expr = self._expandFunctions(self.functions, expr)
+                expr = self._expandFunctions(self.rules["assignment"], expr)
+                tocompute[e.symbol] = (e,expr.subs(self.symdict))
+                g.add_node(e.symbol, mark=False)
             else:
-                initialized.append(e.symbol)
+                initialized[e.symbol] = e.val
+                g.add_node(e.symbol, mark=True)
 
-        for symb, expr in tocompute.items():
-            for atom in expressions.atoms
-        return initialized, tocompute
+        for symb, (_,expr) in tocompute.items():
+            for atom in expr.atoms(sp.Symbol):
+                g.add_edge(atom, symb)
+
+        print ("Applying initialAssignments:")
+        while True:
+            finished=True
+            newtocompute = {}
+            for symb, (e,expr) in tocompute.items():
+                ancestors = g.predecessors(symb)
+                if all ([g.nodes[node]["mark"] for node in ancestors]):
+                    initialized[symb] = expr.subs(initialized)
+                    e.val = initialized[symb]
+                    print ("assigning: ",symb, "=", initialized[symb])
+                    g.nodes[symb]["mark"]=True
+                    finished = False
+                else:
+                    newtocompute[symb]=expr
+            tocompute = newtocompute
+            if finished == True:
+                break
+        if tocompute != {}:
+            raise ValueError ("Unable to compute initialAssignments for ", tocompute)
 
 
-    #def _expandExpression(self, expression, macros):
-    #    for function in macros.values():
+    def _expandFunctions(self, macros, expression):
+        """
+            expands the macros in the current expression.
+            macros should be a map symbol -> object implementing the method apply [TODO should be a callable]
+        """
+        while True: #because there is no infinite recursions in python (nor do-until syntax) -_-
+            recursive_call = False
+            for func in expression.atoms(sp.Function):
+                name = func.func.__name__
+                if name in macros:
+                    expression = macros[name].apply(expression)
+                    recursive_call = True
+            if recursive_call == False:
+                break
+        return expression
+
     def getY0(self):
+        #y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
+        #p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)
+        #return y0,p0
+
+        species = {specie.symbol:specie.getId() for specie in self.species.values()}
+        params = self.listParameters()
+        paramsym = {param.symbol:param.getId() for param in params}
+
+        self.initializesEntities(list(self.species.values()) + params)
+
         y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
         p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)
         return y0,p0
+
+
+

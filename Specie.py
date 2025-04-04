@@ -19,10 +19,8 @@ class Specie (libsbml.Species):
         value = specie.getInitialConcentration()
         if math.isnan(value):
             self.val = specie.getInitialAmount()
-            print ("Adding Amount of specie ", self.getId(), "=", self.val)
         else:
             self.val = max(value, self.getInitialAmount())
-            print ("Adding CONCENTRATION of specie ", self.getId(), "=", self.val)
 
     def buildDifferentialEquation (self, sr, species, reactions, compartments):
         expr = 0
