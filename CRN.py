@@ -17,6 +17,10 @@ import jax.numpy as jnp
 import jax
 from astread import parse_expr
 
+from diffrax import diffeqsolve, ODETerm, Kvaerno5, SaveAt, PIDController
+
+
+jax.config.update("jax_enable_x64", True)
 
 class VertexType (Enum):
     SPECIE=0
@@ -155,15 +159,51 @@ class CRNGraph:
                                                     self.reactions,
                                                     self.compartments)
             exprs.append(expr)
+        entities = {entitie.getId():entitie for entitie in list(self.species.values())+self.listParameters()}
+        self.initializesEntities(entities.values())
+        ssymb,sval = zip (*[(str(specie.symbol)[1:], specie.val) for specie in self.species.values()])
+        ssymb, sval = list(ssymb), list(sval)
+        variables = {}
+        for rule in self.rules["rate"]:
+            print ("Found rateOf rule concerning ", rule.getVariable())
+            var = entities[rule.getVariable()]
+            variables[var.symbol] = var.getId()
+
+            expr = parse_expr(rule.getMath())
+            expr = self._expandFunctions(self.functions, expr)
+            expr = self._expandFunctions(self.rules["assignment"],expr)
+            expr = expr.subs(self.symdict)
+            exprs.append(expr)
+
+        snames = [specie.getId() for specie in self.species.values()]
+        psymb, pval, pnames = [], [], []
+        vsymb, vval, vnames = [], [], []
+        for param in self.listParameters():
+            if not param.symbol in variables:
+                psymb.append(str(param.symbol)[1:])
+                pval.append (param.val)
+                pnames.append(param.getId())
+            else:
+                vsymb.append(str(param.symbol)[1:])
+                vval.append(param.val)
+                vnames.append(param.getId())
+                
 
         odes = sympy2jax.SymbolicModule(exprs)
-        ssymb = [str(specie.symbol)[1:] for specie in self.species.values()]
-        psymb = [str(param.symbol)[1:] for param in self.listParameters()]
-        dict_function = lambda y, params: dict(zip(ssymb, y)) | dict(zip(psymb,params))
+        dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
 
         self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
-        return self.odes
-    
+        return self.odes, jnp.array(sval+vval), jnp.array(pval), (snames+vnames, pnames)
+    def computeTrajectory(self, y0, params, ts, t0=0, dt0=0.1):
+        odes = self.odes
+        saveat = SaveAt(ts=ts)
+        stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
+        t1=ts[-1]
+        function = ODETerm(lambda t,y,args: odes(y,args))
+        solver = Kvaerno5()
+        sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params, stepsize_controller=stepsize_controller, max_steps=5000, throw=False)
+        return sol.ys
+
     def initializesEntities (self, entities):
         """
             Identifies entities for which the initial value are functions of the initial values of other entities
