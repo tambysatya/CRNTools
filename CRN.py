@@ -12,13 +12,14 @@ from Rule import *
 
 from Function import *
 
+
 import networkx as nx
 import jax.numpy as jnp
 import jax
 from astread import parse_expr
 
 from diffrax import diffeqsolve, ODETerm, Kvaerno5, SaveAt, PIDController
-
+import jaxopt
 
 jax.config.update("jax_enable_x64", True)
 
@@ -204,6 +205,18 @@ class CRNGraph:
         sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params, stepsize_controller=stepsize_controller, max_steps=5000, throw=False)
         return sol.ys
 
+    def adjust(self, y0, p0, ts, target):
+        times = jnp.array(ts)
+
+        @jax.jit
+        def loss_fn(params):
+            pred = self.computeTrajectory(y0,params,ts)
+            return jnp.mean((pred-target)**2)
+        
+        solver = jaxopt.BFGS(loss_fn, implicit_diff=True, maxiter=1000, maxls=50)
+        ret = solver.run(p0)
+        return ret.params
+        
     def initializesEntities (self, entities):
         """
             Identifies entities for which the initial value are functions of the initial values of other entities
