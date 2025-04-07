@@ -17,11 +17,22 @@ import networkx as nx
 import jax.numpy as jnp
 import jax
 from astread import parse_expr
+from lineax import AutoLinearSolver
 
-from diffrax import diffeqsolve, ODETerm, Kvaerno5, SaveAt, PIDController
+from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
 import jaxopt
+import optax
 
 jax.config.update("jax_enable_x64", True)
+
+def cast_to_float64(tree):
+    return jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float64), tree)
+def cast_module_to_float64(module):
+    for attr in dir(module):
+        value = getattr(module, attr)
+        if isinstance(value, jnp.ndarray):
+            setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
+    return module
 
 class VertexType (Enum):
     SPECIE=0
@@ -190,33 +201,65 @@ class CRNGraph:
                 vnames.append(param.getId())
                 
 
-        odes = sympy2jax.SymbolicModule(exprs)
+        odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
         dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
 
         self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
-        return self.odes, jnp.array(sval+vval), jnp.array(pval), (snames+vnames, pnames)
-    def computeTrajectory(self, y0, params, ts, t0=0, dt0=0.1):
+        return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
+    def computeTrajectory(self, y0, params, ts, t0=0, dt0=0.1, solver=None, stepsize_controller=None):
         odes = self.odes
         saveat = SaveAt(ts=ts)
-        stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
         t1=ts[-1]
         function = ODETerm(lambda t,y,args: odes(y,args))
-        solver = Kvaerno5()
-        sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params, stepsize_controller=stepsize_controller, max_steps=5000, throw=False)
+        if solver==None:
+            solver = ImplicitEuler()
+            stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
+        sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params,
+                          stepsize_controller=stepsize_controller, max_steps=5000,
+                          throw=True)
         return sol.ys
 
     def adjust(self, y0, p0, ts, target):
+
+        saveat = SaveAt(ts=ts)
+        stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
+        solver = ImplicitEuler()
         times = jnp.array(ts)
 
         @jax.jit
         def loss_fn(params):
-            pred = self.computeTrajectory(y0,params,ts)
+            pred = self.computeTrajectory(y0,params,ts, solver=solver, stepsize_controller=stepsize_controller)
+            #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
+            
             return jnp.mean((pred-target)**2)
         
-        solver = jaxopt.BFGS(loss_fn, implicit_diff=True, maxiter=1000, maxls=50)
-        ret = solver.run(p0)
-        return ret.params
-        
+        @jax.jit
+        def step (params, opt_state):
+            loss, grads = jax.value_and_grad(loss_fn)(params)
+            updates, opt_state = optimizer.update(grads, opt_state)
+            params = optax.apply_updates(params, updates)
+            return params, opt_state, loss
+
+
+        #solver = jaxopt.BFGS(loss_fn, implicit_diff=True,
+                             #maxiter=1000,
+                             #maxls=50,
+        #                     verbose=True, linesearch="zoom")
+        #ret = solver.run(p0)
+        #return ret.params
+        loss, grads = jax.value_and_grad(loss_fn)(p0)
+        print ("initial loss=",loss_fn(p0), " grad=", grads)
+        optimizer = optax.adabelief(1e-4)
+        opt_state = optimizer.init(p0)
+        params = p0
+        for i in range(1000):
+            params, opt_state, loss = step(params, opt_state)
+            if i % 10 == 0:
+                print (f"step={i}: {loss}")
+            if loss < 1e-3:
+                print (loss, ": ", params)
+        return params
+ 
     def initializesEntities (self, entities):
         """
             Identifies entities for which the initial value are functions of the initial values of other entities
