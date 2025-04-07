@@ -22,6 +22,7 @@ from lineax import AutoLinearSolver
 from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
 import jaxopt
 import optax
+import scipy
 
 jax.config.update("jax_enable_x64", True)
 
@@ -202,22 +203,28 @@ class CRNGraph:
                 
 
         odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
+        #dict_function = lambda y: dict(zip(ssymb+vsymb+psymb, y))
+        #self.odes = lambda y: jnp.stack(odes(**dict_function(y)))
         dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
-
         self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
+
+        #return self.odes, jnp.array(sval+vval+pval, dtype=jnp.float64), (snames+vnames+pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
-    def computeTrajectory(self, y0, params, ts, t0=0, dt0=0.1, solver=None, stepsize_controller=None):
+    def computeTrajectory(self, y0,p0, ts):
         odes = self.odes
         saveat = SaveAt(ts=ts)
         t1=ts[-1]
-        function = ODETerm(lambda t,y,args: odes(y,args))
-        if solver==None:
-            solver = ImplicitEuler()
-            stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
-        sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params,
-                          stepsize_controller=stepsize_controller, max_steps=5000,
-                          throw=True)
-        return sol.ys
+        function = lambda t,y, *args: odes(y, args)
+        #function = ODETerm(lambda t,y,args: odes(y,args))
+        #if solver==None:
+        #    solver = ImplicitEuler()
+        #    stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
+        #sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params,
+        #                  stepsize_controller=stepsize_controller, max_steps=5000,
+        #                  throw=True)
+        sol = scipy.integrate.solve_ivp(function,(min(ts), max(ts)),y0, t_eval=ts,method="LSODA", args=p0) 
+        print(sol)
+        return jnp.array(sol.y)
 
     def adjust(self, y0, p0, ts, target):
 
@@ -226,14 +233,12 @@ class CRNGraph:
         solver = ImplicitEuler()
         times = jnp.array(ts)
 
-        @jax.jit
         def loss_fn(params):
-            pred = self.computeTrajectory(y0,params,ts, solver=solver, stepsize_controller=stepsize_controller)
+            pred = self.computeTrajectory(y0,params,ts)
             #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
             
             return jnp.mean((pred-target)**2)
         
-        @jax.jit
         def step (params, opt_state):
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = optimizer.update(grads, opt_state)
@@ -249,6 +254,7 @@ class CRNGraph:
         #return ret.params
         loss, grads = jax.value_and_grad(loss_fn)(p0)
         print ("initial loss=",loss_fn(p0), " grad=", grads)
+        crash
         optimizer = optax.adabelief(1e-4)
         opt_state = optimizer.init(p0)
         params = p0
