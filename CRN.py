@@ -19,10 +19,11 @@ import jax
 from astread import parse_expr
 
 #from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
-#import jaxopt
-#import optax
+import jaxopt
+import optax
 import scipy
-from pybamm import jax_bdf_integrate
+#from pybamm import jax_bdf_integrate
+from tensorflow_probability.substrates.jax.math.ode import BDF
 
 jax.config.update("jax_enable_x64", True)
 
@@ -34,6 +35,11 @@ def cast_module_to_float64(module):
         if isinstance(value, jnp.ndarray):
             setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
     return module
+
+
+def showParam (params, pdict):
+    ndict = {pdict[p[0]]:p[1] for p in params.items()}
+    return ndict
 
 class VertexType (Enum):
     SPECIE=0
@@ -205,16 +211,18 @@ class CRNGraph:
         odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
         #dict_function = lambda y: dict(zip(ssymb+vsymb+psymb, y))
         #self.odes = lambda y: jnp.stack(odes(**dict_function(y)))
-        dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
+        dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | params
+        #dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
         self.odes = lambda y, params: cast_to_float64(jnp.stack(odes(**dict_function(y,params))))
 
         #return self.odes, jnp.array(sval+vval+pval, dtype=jnp.float64), (snames+vnames+pnames)
-        return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
+        #return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
+        return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
     def computeTrajectory(self, y0,p0, ts):
         odes = self.odes
         #saveat = SaveAt(ts=ts)
         t1=ts[-1]
-        function = lambda y,t,args: odes(y, args)
+        function = lambda t,y,**args: odes(y, args)
         #function = lambda t,y,args: odes(y, args)
         #function = ODETerm(lambda t,y,args: odes(y,args))
         #if solver==None:
@@ -224,50 +232,62 @@ class CRNGraph:
         #                  stepsize_controller=stepsize_controller, max_steps=5000,
         #                  throw=True)
         #sol = scipy.integrate.solve_ivp(function,(min(ts), max(ts)),y0, t_eval=ts,method="LSODA", args=p0) 
-        sol = jax_bdf_integrate(function, y0, jnp.array(ts, dtype=jnp.float64), p0)
-        print(sol)
-        return cast_to_float64(sol)
+        bdf = BDF(max_order = 5,
+                  max_num_steps = 2000)
+        sol = bdf.solve(function, 0, y0, solution_times= jnp.array(ts, dtype=jnp.float64),  constants=p0)
+        #sol = jax_bdf_integrate(function, y0, jnp.array(ts, dtype=jnp.float64), p0)
+        return cast_to_float64(sol.states)
 
-    def adjust(self, y0, p0, ts, target):
+    def adjust(self, y0, p0, ts, target, names={}, n_step=10):
 
 
-        def loss_fn(params):
+
+        def loss_fn(params, y0, tgt):
             pred = self.computeTrajectory(y0,params,ts)
-            print (pred.shape, target.shape)
-            return pred.mean()
             #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
             
-            #return jnp.mean((pred-target)**2)
-        
-        def step (params, opt_state):
-            loss, grads = jax.value_and_grad(loss_fn)(params)
+            return jnp.mean((pred-tgt)**2)
+        def step_ (params, opt_state):
+            loss, grads = jax.value_and_grad(loss_fn)(params,y0,target)
+            #loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = optimizer.update(grads, opt_state)
             params = optax.apply_updates(params, updates)
-            return params, opt_state, loss
+            return params, opt_state,loss,grads
 
-
+        def step(params, y0,tgt):
+            loss, grads = jax.value_and_grad(loss_fn)(params,y0,tgt)
+            return loss,grads
         #solver = jaxopt.BFGS(loss_fn, implicit_diff=True,
                              #maxiter=1000,
                              #maxls=50,
         #                     verbose=True, linesearch="zoom")
+        solver = jaxopt.BFGS(fun=step, value_and_grad=True, maxiter=10)
+        res = solver.run(p0, y0=y0, tgt=target)
+        print (res)
+        crash
         #ret = solver.run(p0)
         #return ret.params
-        print ("initial_loss=",loss_fn(p0))
-        grad = jax.grad(loss_fn)
-        print ("grad=", grad(p0))
-        loss, grads = jax.value_and_grad(loss_fn)(p0)
-        print ("initial loss=",loss_fn(p0), " grad=", grads)
-        crash
-        optimizer = optax.adabelief(1e-4)
+        #print ("initial_loss=",loss_fn(p0))
+        print ("adjusting...")
+        #loss, grads = jax.value_and_grad(loss_fn)(p0)
+        #print ("initial loss=",loss_fn(p0), " grad=", jnp.linalg.norm(jnp.array(list(grads.values()))))
+        optimizer = optax.adabelief(1e-5)
         opt_state = optimizer.init(p0)
         params = p0
-        for i in range(1000):
-            params, opt_state, loss = step(params, opt_state)
-            if i % 10 == 0:
-                print (f"step={i}: {loss}")
-            if loss < 1e-3:
-                print (loss, ": ", params)
-        return params
+        for i in range(n_step):
+            params, opt_state, loss, grads= step(params, opt_state)
+            grad_norm = jnp.linalg.norm(jnp.array(list(grads.values())))
+            print ("loss=", loss," grad=",grad_norm, " params=",showParam(params,names))
+            #params, opt_state, loss = step(params, opt_state)
+            #print (f"step={i}: {loss}")
+            #if jnp.linalg.norm(loss) < 1e-3:
+            #    print ("Found: ", loss, ": ", params)
+            #    break
+        if names=={}:
+            return params
+        else:
+            print(showParam(params,names))
+            return params
  
     def initializesEntities (self, entities):
         """
