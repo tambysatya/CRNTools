@@ -17,12 +17,12 @@ import networkx as nx
 import jax.numpy as jnp
 import jax
 from astread import parse_expr
-from lineax import AutoLinearSolver
 
-from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
-import jaxopt
-import optax
+#from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
+#import jaxopt
+#import optax
 import scipy
+from pybamm import jax_bdf_integrate
 
 jax.config.update("jax_enable_x64", True)
 
@@ -206,15 +206,16 @@ class CRNGraph:
         #dict_function = lambda y: dict(zip(ssymb+vsymb+psymb, y))
         #self.odes = lambda y: jnp.stack(odes(**dict_function(y)))
         dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
-        self.odes = lambda y, params: jnp.stack(odes(**dict_function(y,params)))
+        self.odes = lambda y, params: cast_to_float64(jnp.stack(odes(**dict_function(y,params))))
 
         #return self.odes, jnp.array(sval+vval+pval, dtype=jnp.float64), (snames+vnames+pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
     def computeTrajectory(self, y0,p0, ts):
         odes = self.odes
-        saveat = SaveAt(ts=ts)
+        #saveat = SaveAt(ts=ts)
         t1=ts[-1]
-        function = lambda t,y, *args: odes(y, args)
+        function = lambda y,t,args: odes(y, args)
+        #function = lambda t,y,args: odes(y, args)
         #function = ODETerm(lambda t,y,args: odes(y,args))
         #if solver==None:
         #    solver = ImplicitEuler()
@@ -222,22 +223,21 @@ class CRNGraph:
         #sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params,
         #                  stepsize_controller=stepsize_controller, max_steps=5000,
         #                  throw=True)
-        sol = scipy.integrate.solve_ivp(function,(min(ts), max(ts)),y0, t_eval=ts,method="LSODA", args=p0) 
+        #sol = scipy.integrate.solve_ivp(function,(min(ts), max(ts)),y0, t_eval=ts,method="LSODA", args=p0) 
+        sol = jax_bdf_integrate(function, y0, jnp.array(ts, dtype=jnp.float64), p0)
         print(sol)
-        return jnp.array(sol.y)
+        return cast_to_float64(sol)
 
     def adjust(self, y0, p0, ts, target):
 
-        saveat = SaveAt(ts=ts)
-        stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
-        solver = ImplicitEuler()
-        times = jnp.array(ts)
 
         def loss_fn(params):
             pred = self.computeTrajectory(y0,params,ts)
+            print (pred.shape, target.shape)
+            return pred.mean()
             #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
             
-            return jnp.mean((pred-target)**2)
+            #return jnp.mean((pred-target)**2)
         
         def step (params, opt_state):
             loss, grads = jax.value_and_grad(loss_fn)(params)
@@ -252,6 +252,9 @@ class CRNGraph:
         #                     verbose=True, linesearch="zoom")
         #ret = solver.run(p0)
         #return ret.params
+        print ("initial_loss=",loss_fn(p0))
+        grad = jax.grad(loss_fn)
+        print ("grad=", grad(p0))
         loss, grads = jax.value_and_grad(loss_fn)(p0)
         print ("initial loss=",loss_fn(p0), " grad=", grads)
         crash
