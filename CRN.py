@@ -2,6 +2,8 @@
 
 import libsbml
 
+import jax
+jax.config.update("jax_enable_x64", True)
 from functools import partial
 from enum import Enum
 from astread import TIME_SYMBOL
@@ -16,17 +18,16 @@ from Function import *
 
 import networkx as nx
 import jax.numpy as jnp
-import jax
 from astread import parse_expr
 
-#from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
+from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
 import jaxopt
 import optax
 import scipy
+import scipy.integrate as si
 from tensorflow_probability.substrates.jax.math.ode import BDF
 
 
-jax.config.update("jax_enable_x64", True)
 
 def cast_to_float64(tree):
     return jax.tree_util.tree_map(lambda x: jnp.asarray(x, dtype=jnp.float64), tree)
@@ -37,12 +38,29 @@ def cast_module_to_float64(module):
             setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
     return module
 
-@partial(jax.jit, static_argnums=[0,4])
-def computeTrajectoryWithSolver(odes, y0,p0, ts, bdf):
+@partial(jax.jit, static_argnums=[0,4,5])
+def computeTrajectoryWithSolver(odes, y0,p0, ts, solver, max_steps=4096):
     t1=ts[-1]
-    function = lambda t,y,**args: odes(y, args)
-    sol = bdf.solve(function, 0, y0, solution_times= jnp.array(ts, dtype=jnp.float64),  constants=p0)
-    return sol.states
+    function = ODETerm(lambda t,y,args: odes(y, args))
+    saveat = SaveAt(ts=jnp.array(ts))
+    stepsize_controller = PIDController(rtol=1e-8, atol=1e-8, pcoeff=0.3, icoeff=0.4)
+    sol = diffeqsolve(function, solver, t0=0, t1=ts[-1], dt0=0.1, 
+                      y0=y0, 
+                      saveat=saveat,
+                      stepsize_controller=stepsize_controller,
+                      args=p0,
+                      throw=False,
+                      #max_steps=None)
+                      max_steps=max_steps)
+
+    return sol.ys
+
+
+def lsoda (odes, y0, p0, ts):
+    function = lambda t,y: odes(y,p0) 
+    ret = si.solve_ivp(function,(0,ts[-1]), y0, method="LSODA", t_eval=ts)
+    return ret
+
 
 
 
@@ -96,6 +114,7 @@ class CRNGraph:
                 self.rules["assignment"][rule.getVariable()] = Rule(rule)
             elif rule.isAlgebraic():
                 self.rules["algebraic"][rule.getIdAttribute()]=Rule(rule)
+                print ("[Warning] algebraic rule found.")
             elif rule.isRate():
                 self.rules["rate"][rule.getIdAttribute()]=Rule(rule)
             else:
@@ -227,17 +246,8 @@ class CRNGraph:
         #return self.odes, jnp.array(sval+vval+pval, dtype=jnp.float64), (snames+vnames+pnames)
         #return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
-    def computeTrajectory(self, y0,p0, ts):
-        bdf = BDF(max_order = 5,
-                  max_num_steps = 2000)
-        return computeTrajectoryWithSolver(self.odes,y0,p0,ts,bdf)
 
-
-    def adjust(self, y0, p0, ts, target, names={}, n_step=10):
-        bdf = BDF(max_order = 5,
-                  max_num_steps = 20000)
-
-
+    def adjust(self, y0, p0, ts, target, names={}, n_step=10, odesolver=Kvaerno5()):
           
         #def loss_fn(params, y0, tgt):
         #    pred = computeTrajectoryWithSolver(self.odes,y0,params,ts, bdf)
@@ -258,11 +268,11 @@ class CRNGraph:
                              #maxiter=1000,
                              #maxls=50,
         #                     verbose=True, linesearch="zoom")
-        loss_fn = lambda params: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, p0, ts, bdf) - target)**2)
+        loss_fn = lambda params: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, params, ts, odesolver) - target)**2)
         loss,grad = jax.value_and_grad(loss_fn)(p0)
         #loss,grad = jax.value_and_grad(computeTrajectoryWithSolver)(self.odes,y0,p0,ts, bdf)
         print ("initial loss:", loss, " initial grad:", showParam(grad,names))
-        solver = jaxopt.BFGS(fun=loss_fn, value_and_grad=False, maxiter=10, verbose=True)
+        solver = jaxopt.BFGS(fun=loss_fn, value_and_grad=False, maxiter=1000, verbose=True)
         res = solver.run(p0)
         print (res.params)
         return res.params
@@ -369,11 +379,12 @@ class CRNGraph:
 
 
 
-def test():
-    x =  CRNGraph(libsbml.readSBML("biomodels/BIOMD0000000005.xml").getModel())
-    bdf = BDF(max_num_steps=1000)
+def test(solver=None):
+    x =  CRNGraph(libsbml.readSBML("biomodels/BIOMD0000000850.xml").getModel())
+    if None == solver:
+        solver = Kvaerno3()
     f, y0, p0, names = x.generateODEs()
-    traj = computeTrajectoryWithSolver(x.odes, y0, p0, [1,2,3], bdf)
-    pinit = {p[0]:p[1]+10 for p in p0.items()}
-    return x,y0,p0,pinit,traj,bdf
+    traj = computeTrajectoryWithSolver(x.odes, y0, p0, [1,2,3], solver)
+    pinit = {p[0]:p[1]+1 for p in p0.items()}
+    return x,y0,p0,pinit,traj,solver,names
 
