@@ -2,6 +2,7 @@
 
 import libsbml
 
+from functools import partial
 from enum import Enum
 from astread import TIME_SYMBOL
 from Compartment import *
@@ -219,31 +220,27 @@ class CRNGraph:
         #return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
     def computeTrajectory(self, y0,p0, ts):
-        odes = self.odes
-        #saveat = SaveAt(ts=ts)
-        t1=ts[-1]
-        function = lambda t,y,**args: odes(y, args)
-        #function = lambda t,y,args: odes(y, args)
-        #function = ODETerm(lambda t,y,args: odes(y,args))
-        #if solver==None:
-        #    solver = ImplicitEuler()
-        #    stepsize_controller = PIDController(rtol=1e-8,atol=1e-8)
-        #sol = diffeqsolve(function, solver, t0=t0, t1=t1, dt0=dt0, saveat=saveat, y0=y0, args=params,
-        #                  stepsize_controller=stepsize_controller, max_steps=5000,
-        #                  throw=True)
-        #sol = scipy.integrate.solve_ivp(function,(min(ts), max(ts)),y0, t_eval=ts,method="LSODA", args=p0) 
         bdf = BDF(max_order = 5,
                   max_num_steps = 2000)
+        return self.computeTrajectoryWithSolver(y0,p0,ts,bdf)
+
+    @partial(jax.jit, static_argnames=['self','bdf'])
+    def computeTrajectoryWithSolver(self, y0,p0, ts, bdf):
+        odes = self.odes
+        t1=ts[-1]
+        function = lambda t,y,**args: odes(y, args)
         sol = bdf.solve(function, 0, y0, solution_times= jnp.array(ts, dtype=jnp.float64),  constants=p0)
-        #sol = jax_bdf_integrate(function, y0, jnp.array(ts, dtype=jnp.float64), p0)
         return cast_to_float64(sol.states)
 
+
     def adjust(self, y0, p0, ts, target, names={}, n_step=10):
+        bdf = BDF(max_order = 5,
+                  max_num_steps = 2000)
 
 
-
+          
         def loss_fn(params, y0, tgt):
-            pred = self.computeTrajectory(y0,params,ts)
+            pred = self.computeTrajectoryWithSolver(y0,params,ts, bdf)
             #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
             
             return jnp.mean((pred-tgt)**2)
@@ -261,6 +258,8 @@ class CRNGraph:
                              #maxiter=1000,
                              #maxls=50,
         #                     verbose=True, linesearch="zoom")
+        loss,grad = jax.value_and_grad(self.computeTrajectoryWithSolver)(y0,p0,ts, bdf)
+        print ("initial loss:", loss, " grad=", grad)
         solver = jaxopt.BFGS(fun=step, value_and_grad=True, maxiter=10)
         res = solver.run(p0, y0=y0, tgt=target)
         print (res)
