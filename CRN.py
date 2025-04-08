@@ -23,8 +23,8 @@ from astread import parse_expr
 import jaxopt
 import optax
 import scipy
-#from pybamm import jax_bdf_integrate
 from tensorflow_probability.substrates.jax.math.ode import BDF
+
 
 jax.config.update("jax_enable_x64", True)
 
@@ -36,6 +36,14 @@ def cast_module_to_float64(module):
         if isinstance(value, jnp.ndarray):
             setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
     return module
+
+@partial(jax.jit, static_argnums=[0,4])
+def computeTrajectoryWithSolver(odes, y0,p0, ts, bdf):
+    t1=ts[-1]
+    function = lambda t,y,**args: odes(y, args)
+    sol = bdf.solve(function, 0, y0, solution_times= jnp.array(ts, dtype=jnp.float64),  constants=p0)
+    return sol.states
+
 
 
 def showParam (params, pdict):
@@ -222,28 +230,20 @@ class CRNGraph:
     def computeTrajectory(self, y0,p0, ts):
         bdf = BDF(max_order = 5,
                   max_num_steps = 2000)
-        return self.computeTrajectoryWithSolver(y0,p0,ts,bdf)
-
-    @partial(jax.jit, static_argnames=['self','bdf'])
-    def computeTrajectoryWithSolver(self, y0,p0, ts, bdf):
-        odes = self.odes
-        t1=ts[-1]
-        function = lambda t,y,**args: odes(y, args)
-        sol = bdf.solve(function, 0, y0, solution_times= jnp.array(ts, dtype=jnp.float64),  constants=p0)
-        return cast_to_float64(sol.states)
+        return computeTrajectoryWithSolver(self.odes,y0,p0,ts,bdf)
 
 
     def adjust(self, y0, p0, ts, target, names={}, n_step=10):
         bdf = BDF(max_order = 5,
-                  max_num_steps = 2000)
+                  max_num_steps = 20000)
 
 
           
-        def loss_fn(params, y0, tgt):
-            pred = self.computeTrajectoryWithSolver(y0,params,ts, bdf)
-            #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
-            
-            return jnp.mean((pred-tgt)**2)
+        #def loss_fn(params, y0, tgt):
+        #    pred = computeTrajectoryWithSolver(self.odes,y0,params,ts, bdf)
+        #    #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
+        #    
+        #    return jnp.mean((pred-tgt)**2)
         def step_ (params, opt_state):
             loss, grads = jax.value_and_grad(loss_fn)(params,y0,target)
             #loss, grads = jax.value_and_grad(loss_fn)(params)
@@ -258,11 +258,14 @@ class CRNGraph:
                              #maxiter=1000,
                              #maxls=50,
         #                     verbose=True, linesearch="zoom")
-        loss,grad = jax.value_and_grad(self.computeTrajectoryWithSolver)(y0,p0,ts, bdf)
-        print ("initial loss:", loss, " grad=", grad)
-        solver = jaxopt.BFGS(fun=step, value_and_grad=True, maxiter=10)
-        res = solver.run(p0, y0=y0, tgt=target)
-        print (res)
+        loss_fn = lambda params: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, p0, ts, bdf) - target)**2)
+        loss,grad = jax.value_and_grad(loss_fn)(p0)
+        #loss,grad = jax.value_and_grad(computeTrajectoryWithSolver)(self.odes,y0,p0,ts, bdf)
+        print ("initial loss:", loss, " initial grad:", showParam(grad,names))
+        solver = jaxopt.BFGS(fun=loss_fn, value_and_grad=False, maxiter=10, verbose=True)
+        res = solver.run(p0)
+        print (res.params)
+        return res.params
         crash
         #ret = solver.run(p0)
         #return ret.params
@@ -364,4 +367,13 @@ class CRNGraph:
         return y0,p0
 
 
+
+
+def test():
+    x =  CRNGraph(libsbml.readSBML("biomodels/BIOMD0000000005.xml").getModel())
+    bdf = BDF(max_num_steps=1000)
+    f, y0, p0, names = x.generateODEs()
+    traj = computeTrajectoryWithSolver(x.odes, y0, p0, [1,2,3], bdf)
+    pinit = {p[0]:p[1]+10 for p in p0.items()}
+    return x,y0,p0,pinit,traj,bdf
 
