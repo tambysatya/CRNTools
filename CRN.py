@@ -21,11 +21,11 @@ import jax.numpy as jnp
 from astread import parse_expr
 
 from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
-import jaxopt
-import optax
+import diffrax
+import optimistix as optx
+import lineax
 import scipy
 import scipy.integrate as si
-from tensorflow_probability.substrates.jax.math.ode import BDF
 
 
 
@@ -43,13 +43,14 @@ def computeTrajectoryWithSolver(odes, y0,p0, ts, solver, max_steps=4096):
     t1=ts[-1]
     function = ODETerm(lambda t,y,args: odes(y, args))
     saveat = SaveAt(ts=jnp.array(ts))
-    stepsize_controller = PIDController(rtol=1e-8, atol=1e-8, pcoeff=0.3, icoeff=0.4)
+    stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
     sol = diffeqsolve(function, solver, t0=0, t1=ts[-1], dt0=0.1, 
                       y0=y0, 
                       saveat=saveat,
                       stepsize_controller=stepsize_controller,
                       args=p0,
                       throw=False,
+                      adjoint=diffrax.ForwardMode(),
                       #max_steps=None)
                       max_steps=max_steps)
 
@@ -247,7 +248,7 @@ class CRNGraph:
         #return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
 
-    def adjust(self, y0, p0, ts, target, names={}, n_step=10, odesolver=Kvaerno5()):
+    def adjust(self, y0, p0, ts, target, names={}, n_step=10, ode_solver=Kvaerno5(), ode_max_steps=4096):
           
         #def loss_fn(params, y0, tgt):
         #    pred = computeTrajectoryWithSolver(self.odes,y0,params,ts, bdf)
@@ -264,18 +265,23 @@ class CRNGraph:
         def step(params, y0,tgt):
             loss, grads = jax.value_and_grad(loss_fn)(params,y0,tgt)
             return loss,grads
-        #solver = jaxopt.BFGS(loss_fn, implicit_diff=True,
-                             #maxiter=1000,
-                             #maxls=50,
-        #                     verbose=True, linesearch="zoom")
-        loss_fn = lambda params: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, params, ts, odesolver) - target)**2)
-        loss,grad = jax.value_and_grad(loss_fn)(p0)
+        loss_fn = lambda params,_: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, params, ts, ode_solver, max_steps=ode_max_steps) - target)**2)
+        #loss_fn = lambda params, _: computeTrajectoryWithSolver(self.odes, y0, params, ts, ode_solver, max_steps=ode_max_steps) - target
+        #loss,grad = jax.value_and_grad(loss_fn)(p0)
         #loss,grad = jax.value_and_grad(computeTrajectoryWithSolver)(self.odes,y0,p0,ts, bdf)
-        print ("initial loss:", loss, " initial grad:", showParam(grad,names))
-        solver = jaxopt.BFGS(fun=loss_fn, value_and_grad=False, maxiter=1000, verbose=True)
-        res = solver.run(p0)
-        print (res.params)
-        return res.params
+        #print ("initial loss:", loss, " initial grad:", showParam(grad,names))
+        #solver = jaxopt.BFGS(fun=loss_fn, value_and_grad=False, maxiter=n_step, verbose=True)
+        #res = solver.run(p0)
+        #solver = optx.BFGS(
+        solver = optx.LevenbergMarquardt(
+                    rtol=1e-8, atol=1e-8,
+                    verbose=frozenset({"step", "accepted","loss", "step_size"})
+                )
+
+        #res = optx.minimise(loss_fn, solver, p0, max_steps=n_step, options={"autodiff_mode":"fwd"})
+        res = optx.least_squares(loss_fn, solver, p0, max_steps=n_step, options={"autodiff_mode":"fwd"}, throw=False)
+        print (res.value)
+        return res.value
         crash
         #ret = solver.run(p0)
         #return ret.params
@@ -379,12 +385,22 @@ class CRNGraph:
 
 
 
-def test(solver=None):
-    x =  CRNGraph(libsbml.readSBML("biomodels/BIOMD0000000850.xml").getModel())
-    if None == solver:
-        solver = Kvaerno3()
+def test(solver=Kvaerno5(root_finder=optx.Chord(rtol=1e-8,
+                                                atol=1e-8,
+                                                linear_solver=lineax.AutoLinearSolver(well_posed=False))),
+         ts=[1,2,3]):
+    x =  CRNGraph(libsbml.readSBML("biomodels/BIOMD0000000005.xml").getModel())
     f, y0, p0, names = x.generateODEs()
-    traj = computeTrajectoryWithSolver(x.odes, y0, p0, [1,2,3], solver)
-    pinit = {p[0]:p[1]+1 for p in p0.items()}
+    traj = computeTrajectoryWithSolver(x.odes, y0, p0, ts, solver)
+    pinit = {p[0]:jnp.array(0.01, dtype=jnp.float64) for p in p0.items()}
+    #pinit = {p[0]:p[1]+100 for p in p0.items()}
     return x,y0,p0,pinit,traj,solver,names
 
+
+import time
+
+def timeit (f):
+    start = time.time()
+    f()
+    end = time.time()
+    print ("elapsed: ", end-start)
