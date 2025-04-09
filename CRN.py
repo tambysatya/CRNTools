@@ -22,13 +22,10 @@ from astread import parse_expr
 
 from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
 import diffrax
-import jaxopt
-import optax
 import optimistix as optx
 import lineax
 import scipy
 import scipy.integrate as si
-from tensorflow_probability.substrates.jax.math.ode import BDF
 
 
 
@@ -399,3 +396,11 @@ def test(solver=Kvaerno5(root_finder=optx.Chord(rtol=1e-8,
     #pinit = {p[0]:p[1]+100 for p in p0.items()}
     return x,y0,p0,pinit,traj,solver,names
 
+
+import time
+
+def timeit (f):
+    start = time.time()
+    f()
+    end = time.time()
+    print ("elapsed: ", end-start)
