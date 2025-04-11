@@ -2,6 +2,10 @@
 
 import libsbml
 
+import os
+#os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=30' # Use multiples CPU devices
+#os.environ["XLA_FLAGS"]="--xla_cpu_multi_thread_eigen=trueintra_op_parallelism_threads=1 --xla_force_host_platform_device_count=8"
+
 import jax
 jax.config.update("jax_enable_x64", True)
 from functools import partial
@@ -38,10 +42,11 @@ def cast_module_to_float64(module):
             setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
     return module
 
-@partial(jax.jit, static_argnums=[0,4,5])
+#@partial(jax.jit, static_argnums=[0,4,5])
 def computeTrajectoryWithSolver(odes, y0,p0, ts, solver, max_steps=4096):
     t1=ts[-1]
     function = ODETerm(lambda t,y,args: odes(y, args))
+#    saveat = SaveAt(steps=True)
     saveat = SaveAt(ts=jnp.array(ts))
     stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
     sol = diffeqsolve(function, solver, t0=0, t1=ts[-1], dt0=0.1, 
@@ -55,7 +60,6 @@ def computeTrajectoryWithSolver(odes, y0,p0, ts, solver, max_steps=4096):
                       max_steps=max_steps)
 
     return sol.ys
-
 
 def lsoda (odes, y0, p0, ts):
     function = lambda t,y: odes(y,p0) 
@@ -151,7 +155,6 @@ class CRNGraph:
         self.identifyConstantSpecies()
         print (f"Found {len(self.species)} species, {len(self.parameters)} global parameters, {len(self.compartments)} compartments, {len(self.reactions)} reactions and {len(self.parametersspecies)} constant species.")
 
-        self.getY0()
         
     def identifyConstantSpecies(self):
         species = {}
@@ -247,66 +250,19 @@ class CRNGraph:
         #return self.odes, jnp.array(sval+vval+pval, dtype=jnp.float64), (snames+vnames+pnames)
         #return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
-
-    def adjust(self, y0, p0, ts, target, names={}, n_step=10, ode_solver=Kvaerno5(), ode_max_steps=4096):
+    
+    #@partial(jax.jit, static_argnames=["self","ode_solver", "n_step"])
+    def adjust(self, y0, p0, ts, target, n_step=10, ode_solver=Kvaerno5(), ode_max_steps=4096):
           
-        #def loss_fn(params, y0, tgt):
-        #    pred = computeTrajectoryWithSolver(self.odes,y0,params,ts, bdf)
-        #    #pred = jnp.where(jnp.isnan(pred) | jnp.isinf(pred), 1e6,pred)
-        #    
-        #    return jnp.mean((pred-tgt)**2)
-        def step_ (params, opt_state):
-            loss, grads = jax.value_and_grad(loss_fn)(params,y0,target)
-            #loss, grads = jax.value_and_grad(loss_fn)(params)
-            updates, opt_state = optimizer.update(grads, opt_state)
-            params = optax.apply_updates(params, updates)
-            return params, opt_state,loss,grads
-
-        def step(params, y0,tgt):
-            loss, grads = jax.value_and_grad(loss_fn)(params,y0,tgt)
-            return loss,grads
         loss_fn = lambda params,_: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, params, ts, ode_solver, max_steps=ode_max_steps) - target)**2)
-        #loss_fn = lambda params, _: computeTrajectoryWithSolver(self.odes, y0, params, ts, ode_solver, max_steps=ode_max_steps) - target
-        #loss,grad = jax.value_and_grad(loss_fn)(p0)
-        #loss,grad = jax.value_and_grad(computeTrajectoryWithSolver)(self.odes,y0,p0,ts, bdf)
-        #print ("initial loss:", loss, " initial grad:", showParam(grad,names))
-        #solver = jaxopt.BFGS(fun=loss_fn, value_and_grad=False, maxiter=n_step, verbose=True)
-        #res = solver.run(p0)
-        #solver = optx.BFGS(
         solver = optx.LevenbergMarquardt(
                     rtol=1e-8, atol=1e-8,
-                    verbose=frozenset({"step", "accepted","loss", "step_size"})
+                    #verbose=frozenset({"step", "accepted","loss", "step_size"})
                 )
 
-        #res = optx.minimise(loss_fn, solver, p0, max_steps=n_step, options={"autodiff_mode":"fwd"})
         res = optx.least_squares(loss_fn, solver, p0, max_steps=n_step, options={"autodiff_mode":"fwd"}, throw=False)
-        print (res.value)
         return res.value
-        crash
-        #ret = solver.run(p0)
-        #return ret.params
-        #print ("initial_loss=",loss_fn(p0))
-        print ("adjusting...")
-        #loss, grads = jax.value_and_grad(loss_fn)(p0)
-        #print ("initial loss=",loss_fn(p0), " grad=", jnp.linalg.norm(jnp.array(list(grads.values()))))
-        optimizer = optax.adabelief(1e-5)
-        opt_state = optimizer.init(p0)
-        params = p0
-        for i in range(n_step):
-            params, opt_state, loss, grads= step(params, opt_state)
-            grad_norm = jnp.linalg.norm(jnp.array(list(grads.values())))
-            print ("loss=", loss," grad=",grad_norm, " params=",showParam(params,names))
-            #params, opt_state, loss = step(params, opt_state)
-            #print (f"step={i}: {loss}")
-            #if jnp.linalg.norm(loss) < 1e-3:
-            #    print ("Found: ", loss, ": ", params)
-            #    break
-        if names=={}:
-            return params
-        else:
-            print(showParam(params,names))
-            return params
- 
+
     def initializesEntities (self, entities):
         """
             Identifies entities for which the initial value are functions of the initial values of other entities
@@ -367,23 +323,6 @@ class CRNGraph:
                 break
         return expression
 
-    def getY0(self):
-        #y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
-        #p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)
-        #return y0,p0
-
-        species = {specie.symbol:specie.getId() for specie in self.species.values()}
-        params = self.listParameters()
-        paramsym = {param.symbol:param.getId() for param in params}
-
-        self.initializesEntities(list(self.species.values()) + params)
-
-        y0 = jnp.array([specie.val for specie in self.species.values()], dtype=float)
-        p0 = jnp.array([param.val for param in self.listParameters()], dtype=float)
-        return y0,p0
-
-
-
 
 def test(solver=Kvaerno5(root_finder=optx.Chord(rtol=1e-8,
                                                 atol=1e-8,
@@ -404,3 +343,14 @@ def timeit (f):
     f()
     end = time.time()
     print ("elapsed: ", end-start)
+
+
+
+#print (jax.devices())
+#ts=[1,2,5,10,15,50,100,200,300]
+#x,y0,p0,pinit,traj,solver,names=test(ts=ts)
+#print (traj)
+#f= lambda :x.adjust(y0,pinit,ts,traj,n_step=10000)
+#
+#
+#timeit(f)

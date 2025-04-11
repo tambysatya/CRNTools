@@ -9,6 +9,7 @@ let
 			};
   diffrax = pkgs.callPackage ./diffrax.nix {pkgs=pkgs;};
   wadler-lindig = pkgs.callPackage ./wadler-lindig.nix {pkgs=pkgs;};
+  sympy2jax= pkgs.callPackage ./sympy2jax.nix {pkgs=pkgs;};
 in pkgs.mkShell {
   buildInputs = [
     pkgs.libsbml
@@ -34,6 +35,7 @@ in pkgs.mkShell {
     pkgs.python312Packages.requests
     wadler-lindig
     diffrax
+    sympy2jax
    
 
 
