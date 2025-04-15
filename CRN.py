@@ -31,6 +31,9 @@ import lineax
 import scipy
 import scipy.integrate as si
 
+import sys
+jnp.set_printoptions(threshold=sys.maxsize)
+
 
 
 def cast_to_float64(tree):
@@ -42,24 +45,53 @@ def cast_module_to_float64(module):
             setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
     return module
 
-#@partial(jax.jit, static_argnums=[0,4,5])
-def computeTrajectoryWithSolver(odes, y0,p0, ts, solver, max_steps=4096):
+@partial(jax.jit, static_argnums=[0,4,5])
+def computeTrajectoryWithSolverTs(odes, y0,p0, ts, solver, max_steps=4096):
     t1=ts[-1]
     function = ODETerm(lambda t,y,args: odes(y, args))
-#    saveat = SaveAt(steps=True)
-    saveat = SaveAt(ts=jnp.array(ts))
     stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
-    sol = diffeqsolve(function, solver, t0=0, t1=ts[-1], dt0=0.1, 
+    saveat = SaveAt(t0=True, t1=True, ts=jnp.array(ts))
+    sol = diffeqsolve(function, solver, t0=0, t1=t1, dt0=None, #dt0=0.1, 
                       y0=y0, 
                       saveat=saveat,
                       stepsize_controller=stepsize_controller,
                       args=p0,
                       throw=False,
                       adjoint=diffrax.ForwardMode(),
-                      #max_steps=None)
                       max_steps=max_steps)
 
     return sol.ys
+@partial(jax.jit, static_argnums=[0,4,5])
+def computeTrajectoryWithSolverSteps(odes, y0,p0, ts, solver, max_steps=4096):
+    t1=ts
+    function = ODETerm(lambda t,y,args: odes(y, args))
+    stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
+    saveat = SaveAt(t0=True, t1=True, steps=True)
+    sol = diffeqsolve(function, solver, t0=0, t1=ts, dt0=None,
+                      y0=y0, 
+                      saveat=saveat,
+                      stepsize_controller=stepsize_controller,
+                      args=p0,
+                      throw=False,
+                      adjoint=diffrax.ForwardMode(),
+                      max_steps=max_steps)
+
+    return sol
+def computeTrajectoryWithSolver(odes,y0,p0,ts,solver,max_steps=4096):
+    if isinstance(ts, list):
+        return computeTrajectoryWithSolverTs(odes,y0,p0,ts,solver,max_steps)
+    else:
+        nfeats = len(y0)
+        sol = computeTrajectoryWithSolverSteps(odes,y0,p0,ts,solver,max_steps)
+
+        times = sol.ts[jnp.isfinite(sol.ts)]
+        
+        ret = sol.ys[jnp.isfinite(sol.ys)]
+        ret = ret.reshape(-1,nfeats) 
+        return times, ret
+
+
+
 
 def lsoda (odes, y0, p0, ts):
     function = lambda t,y: odes(y,p0) 
@@ -241,17 +273,11 @@ class CRNGraph:
                 
 
         odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
-        #dict_function = lambda y: dict(zip(ssymb+vsymb+psymb, y))
-        #self.odes = lambda y: jnp.stack(odes(**dict_function(y)))
         dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | params
-        #dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | dict(zip(psymb,params))
         self.odes = lambda y, params: cast_to_float64(jnp.stack(odes(**dict_function(y,params))))
-
-        #return self.odes, jnp.array(sval+vval+pval, dtype=jnp.float64), (snames+vnames+pnames)
-        #return self.odes, jnp.array(sval+vval, dtype=jnp.float64), jnp.array(pval, dtype=jnp.float64), (snames+vnames, pnames)
         return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
     
-    #@partial(jax.jit, static_argnames=["self","ode_solver", "n_step"])
+    @partial(jax.jit, static_argnames=["self","ode_solver", "n_step"])
     def adjust(self, y0, p0, ts, target, n_step=10, ode_solver=Kvaerno5(), ode_max_steps=4096):
           
         loss_fn = lambda params,_: jnp.mean((computeTrajectoryWithSolver(self.odes, y0, params, ts, ode_solver, max_steps=ode_max_steps) - target)**2)
@@ -262,6 +288,16 @@ class CRNGraph:
 
         res = optx.least_squares(loss_fn, solver, p0, max_steps=n_step, options={"autodiff_mode":"fwd"}, throw=False)
         return res.value
+
+
+    def simulate(self,ts, solver=Kvaerno5(), max_steps=4096, return_times = False):
+        f, y0, p0, names = self.generateODEs()
+        times, traj = computeTrajectoryWithSolver(f, y0, p0,ts,solver, max_steps=max_steps)
+
+        if return_times:
+            return times, traj
+        else:
+            return traj
 
     def initializesEntities (self, entities):
         """
@@ -336,6 +372,11 @@ def test(solver=Kvaerno5(root_finder=optx.Chord(rtol=1e-8,
     return x,y0,p0,pinit,traj,solver,names
 
 
+def generate_data(filename, t1):
+    x =  CRNGraph(libsbml.readSBML(filename).getModel())
+    return x.simulate(t1)
+
+
 import time
 
 def timeit (f):
@@ -347,10 +388,8 @@ def timeit (f):
 
 
 #print (jax.devices())
-#ts=[1,2,5,10,15,50,100,200,300]
-#x,y0,p0,pinit,traj,solver,names=test(ts=ts)
+ts=[1,2,5,10,15,50,100,200,300]
+x,y0,p0,pinit,traj,solver,names=test(ts=ts)
 #print (traj)
 #f= lambda :x.adjust(y0,pinit,ts,traj,n_step=10000)
-#
-#
 #timeit(f)
