@@ -247,7 +247,7 @@ class CRNGraph:
         ssymb,sval = zip (*[(str(specie.symbol)[1:], specie.val) for specie in self.species.values()])
         ssymb, sval = list(ssymb), list(sval)
         variables = {}
-        for rule in self.rules["rate"]:
+        for rule in self.rules["rate"].values():
             print ("Found rateOf rule concerning ", rule.getVariable())
             var = entities[rule.getVariable()]
             variables[var.symbol] = var.getId()
