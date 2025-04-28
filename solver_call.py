@@ -55,7 +55,7 @@ def computeTrajectoryWithSolver(odes,y0,p0,ts,solver,max_steps=4096):
 
 
 @partial(jax.jit, static_argnums=[0,4,5])
-def computeTrajectoryWithEvents (odes, y0, p0, tmax, solver, max_steps=4096):
+def computeTrajectoryUntilSteadyState(odes, y0, p0, tmax, solver, max_steps=4096):
     cond_fn = diffrax.steady_state_event()
     event = diffrax.Event(cond_fn)
     stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
@@ -80,13 +80,15 @@ def cleanSolution (sol):
 
 
 
-def computeTrajectoriesWithEvents (odes, y0, p0, tmax, solver,a,b,c,key=random.key(0), max_steps=4096, n_trajectories=1):
-"""
-    computes multiples trajectories using different initial conditions
-"""
+def computeTrajectoriesUntilSteadyState(odes, y0, p0, tmax, solver,a,b,c,key=random.key(0), max_steps=4096, n_trajectories=1):
+    """
+    computes multiples trajectories using different initial conditions (the parameters values remains unchanged).
+    Trajectories will not have the same number of points, and stops at the steady state.
+
+    """
 
     def fun(y):
-        sol = computeTrajectoryWithEvents(odes, y, p0, tmax, solver, max_steps)
+        sol = computeTrajectoryUntilSteadyState(odes, y, p0, tmax, solver, max_steps)
         return sol.ts, sol.ys
 
     #fun = lambda y: cleanSolution(computeTrajectoryWithEvents(odes, y, p0, tmax, solver, max_steps))
