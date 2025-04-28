@@ -348,8 +348,8 @@ def timeit (f):
 
 
 #print (jax.devices())
-ts=[1,2,5,10,15,50,100,200,300]
-x,y0,p0,pinit,traj,solver,names=test(ts=ts)
+#ts=[1,2,5,10,15,50,100,200,300]
+#x,y0,p0,pinit,traj,solver,names=test(ts=ts)
 #print (traj)
 #f= lambda :x.adjust(y0,pinit,ts,traj,n_step=10000)
 #timeit(f)
