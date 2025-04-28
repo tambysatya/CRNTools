@@ -8,6 +8,7 @@ import os
 
 import jax
 jax.config.update("jax_enable_x64", True)
+from jax.flatten_util  import ravel_pytree
 from functools import partial
 from enum import Enum
 from astread import TIME_SYMBOL
@@ -17,15 +18,15 @@ from Reaction import *
 from Parameter import *
 from Rule import *
 
+from diffrax import Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
 from Function import *
+from solver_call import *
 
 
 import networkx as nx
 import jax.numpy as jnp
 from astread import parse_expr
 
-from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
-import diffrax
 import optimistix as optx
 import lineax
 import scipy
@@ -44,52 +45,6 @@ def cast_module_to_float64(module):
         if isinstance(value, jnp.ndarray):
             setattr(module, attr, jnp.asarray(value, dtype=jnp.float64))
     return module
-
-@partial(jax.jit, static_argnums=[0,4,5])
-def computeTrajectoryWithSolverTs(odes, y0,p0, ts, solver, max_steps=4096):
-    t1=ts[-1]
-    function = ODETerm(lambda t,y,args: odes(y, args))
-    stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
-    saveat = SaveAt(t0=True, t1=True, ts=jnp.array(ts))
-    sol = diffeqsolve(function, solver, t0=0, t1=t1, dt0=None, #dt0=0.1, 
-                      y0=y0, 
-                      saveat=saveat,
-                      stepsize_controller=stepsize_controller,
-                      args=p0,
-                      throw=False,
-                      adjoint=diffrax.ForwardMode(),
-                      max_steps=max_steps)
-
-    return sol.ys
-@partial(jax.jit, static_argnums=[0,4,5])
-def computeTrajectoryWithSolverSteps(odes, y0,p0, ts, solver, max_steps=4096):
-    t1=ts
-    function = ODETerm(lambda t,y,args: odes(y, args))
-    stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
-    saveat = SaveAt(t0=True, t1=True, steps=True)
-    sol = diffeqsolve(function, solver, t0=0, t1=ts, dt0=None,
-                      y0=y0, 
-                      saveat=saveat,
-                      stepsize_controller=stepsize_controller,
-                      args=p0,
-                      throw=False,
-                      adjoint=diffrax.ForwardMode(),
-                      max_steps=max_steps)
-
-    return sol
-def computeTrajectoryWithSolver(odes,y0,p0,ts,solver,max_steps=4096):
-    if isinstance(ts, list):
-        return computeTrajectoryWithSolverTs(odes,y0,p0,ts,solver,max_steps)
-    else:
-        nfeats = len(y0)
-        sol = computeTrajectoryWithSolverSteps(odes,y0,p0,ts,solver,max_steps)
-
-        times = sol.ts[jnp.isfinite(sol.ts)]
-        
-        ret = sol.ys[jnp.isfinite(sol.ys)]
-        ret = ret.reshape(-1,nfeats) 
-        return times, ret
-
 
 
 
@@ -273,9 +228,14 @@ class CRNGraph:
                 
 
         odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
-        dict_function = lambda y, params: dict(zip(ssymb+vsymb, y)) | params
+        y0 = jnp.array(sval+vval, dtype=jnp.float64)
+        y0dict = dict (zip(ssymb+vsymb, y0))
+        _, mky0 = ravel_pytree(y0dict)
+
+
+        dict_function = lambda y, params: mky0(y) | params
         self.odes = lambda y, params: cast_to_float64(jnp.stack(odes(**dict_function(y,params))))
-        return self.odes, jnp.array(sval+vval, dtype=jnp.float64), dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
+        return self.odes, y0,  dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
     
     @partial(jax.jit, static_argnames=["self","ode_solver", "n_step"])
     def adjust(self, y0, p0, ts, target, n_step=10, ode_solver=Kvaerno5(), ode_max_steps=4096):
