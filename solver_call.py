@@ -106,7 +106,7 @@ def computeTrajectoriesUntilSteadyState(odes, y0, p0, tmax, solver,a,b,c,key=ran
         ret.append((times,vals))
 
 
-    return ret, nkey
+    return ret, y0s, nkey
 
 
 

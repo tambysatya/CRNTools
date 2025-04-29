@@ -12,6 +12,7 @@ let
   sympy2jax= pkgs.callPackage ./sympy2jax.nix {pkgs=pkgs;};
 in pkgs.mkShell {
   buildInputs = [
+    pkgs.zlib
     pkgs.libsbml
     pkgs.python312
     pkgs.stdenv.cc.cc.lib

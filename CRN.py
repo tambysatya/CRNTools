@@ -168,24 +168,36 @@ class CRNGraph:
         params += list (self.parametersspecies.values())
         return params
 
-    def rewrite(self):
+    def rewrite(self, rename=False):
+        """
+            Displays the differential equations:
+                if rename = True, relabels the parameters p1...pn and the species x1...xp
+        """
         odes = [specie.buildDifferentialEquation(self.sr,
                                                  self.species | self.parametersspecies,
                                                  self.reactions,
-                                                 self.compartments,
-                                                 symbolic=True) for specieid, specie in self.species.items()]
+                                                 self.compartments) for specieid, specie in self.species.items()]
         params = self.listParameters()
         symbs = {}
         i = 1
         for p in params:
-            symbs[p.symbol] = sp.symbols("k"+str(i))
+            if rename:
+                symbs[p.symbol] = sp.symbols("k"+str(i))
+            else:
+                symbs[p.symbol] = sp.symbols(p.getId())
             i = i+1
         i=1
         for s in self.species.values():
-            symbs[s.symbol] = sp.symbols("x"+str(i))
+            if rename:
+                symbs[s.symbol] = sp.symbols("x"+str(i))
+            else:
+                symbs[s.symbol] = sp.symbols(s.getId())
             i = i+1
 
         exprs = [ode.subs(symbs) for ode in odes]
+
+
+
         for expr in exprs:
             print (expr)
 
@@ -208,6 +220,8 @@ class CRNGraph:
             variables[var.symbol] = var.getId()
 
             expr = parse_expr(rule.getMath())
+
+            # application of functions and assignment rules
             expr = self._expandFunctions(self.functions, expr)
             expr = self._expandFunctions(self.rules["assignment"],expr)
             expr = expr.subs(self.symdict)
