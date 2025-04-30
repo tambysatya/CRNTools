@@ -1,5 +1,6 @@
 
 import jax
+from jax.lax import stop_gradient
 import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 from functools import partial
@@ -55,18 +56,19 @@ def computeTrajectoryWithSolver(odes,y0,p0,ts,solver,max_steps=4096):
 
 
 @partial(jax.jit, static_argnums=[0,4,5])
-def computeTrajectoryUntilSteadyState(odes, y0, p0, tmax, solver, max_steps=4096):
+def computeTrajectoryUntilSteadyState_(odes, y0, p0, tmax, solver, max_steps=4096):
     cond_fn = diffrax.steady_state_event()
     event = diffrax.Event(cond_fn)
-    stepsize_controller = PIDController(rtol=1e-8, atol=1e-9, pcoeff=0.1, icoeff=0.2, dcoeff=0)
-    saveat = SaveAt(t0=True, steps=True)
+    stepsize_controller = PIDController(rtol=1e-3, atol=1e-6, pcoeff=0.1, icoeff=0.2, dcoeff=0)
+    saveat = SaveAt(t0=True,t1=True, steps=True)
     function = ODETerm(lambda t,y,args: odes(y, args))
     sol = diffeqsolve(function, solver, t0=0, t1=tmax, dt0=None,
                       y0=y0, 
                       saveat=saveat,
                       stepsize_controller=stepsize_controller,
                       args=p0,
-                      throw=False,
+                      throw=True,
+                      event = event,
                       adjoint=diffrax.ForwardMode(),
                       max_steps=max_steps)
 
@@ -79,6 +81,12 @@ def cleanSolution (sol):
     return times, ret
 
 
+def computeTrajectoryUntilSteadyState(odes, y0, p0, tmax, solver, max_steps=4096, track_gradient=True):
+    if track_gradient == True: 
+        sol = computeTrajectoryUntilSteadyState_ (odes,y0,p0,tmax,solver,max_steps=max_steps)
+    else:
+        sol = computeTrajectoryUntilSteadyState_ (odes,stop_gradient(y0),stop_gradient(p0),tmax,solver,max_steps=max_steps)
+    return cleanSolution(sol)
 
 def computeTrajectoriesUntilSteadyState(odes, y0, p0, tmax, solver,a,b,c,key=random.key(0), max_steps=4096, n_trajectories=1):
     """
@@ -88,7 +96,7 @@ def computeTrajectoriesUntilSteadyState(odes, y0, p0, tmax, solver,a,b,c,key=ran
     """
 
     def fun(y):
-        sol = computeTrajectoryUntilSteadyState(odes, y, p0, tmax, solver, max_steps)
+        sol = computeTrajectoryUntilSteadyState_(odes, y, p0, tmax, solver, max_steps)
         return sol.ts, sol.ys
 
     #fun = lambda y: cleanSolution(computeTrajectoryWithEvents(odes, y, p0, tmax, solver, max_steps))

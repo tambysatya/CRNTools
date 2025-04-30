@@ -29,6 +29,8 @@ in pkgs.mkShell {
     pkgs.python312Packages.equinox
     pkgs.python312Packages.lineax
     pkgs.python312Packages.optimistix
+    pkgs.python312Packages.torch
+    pkgs.python312Packages.matplotlib
 
 
 

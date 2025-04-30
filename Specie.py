@@ -18,8 +18,10 @@ class Specie (libsbml.Species):
         
         if specie.isSetInitialConcentration():
             self.val = specie.getInitialConcentration()
+            print (f"{self.getId()}: initial concentration is {self.val}")
         elif specie.isSetInitialAmount():
             self.val = specie.getInitialAmount()
+            print (f"{self.getId()}: initial amount is {self.val}")
         else:
             print ("WARNING: ", self.getId(), " has no initial amount nor concentration")
             self.val=specie.getInitialConcentration()
@@ -32,13 +34,14 @@ class Specie (libsbml.Species):
         for reactionid in sr.predecessors(me): #reactions for which I am a product
             if sr[reactionid][me]["type"] == "product":
                 reaction = reactions[reactionid]
-                coef = sr[reactionid][me]["stoichiometry"]
+                coef = sr[reactionid][me]["stoichiometry"]#
                 term = coef*reaction.symbolic_formula
                 if reaction.getNumReactants() > 0:
                     reactantid = reaction.getReactant(0).getSpecies()
                     reactant = species[reactantid]
                     compartment = compartments[reactant.getCompartment()]
-                    expr += term*compartment.symbol
+                    expr += term
+                    #expr += term*compartment.symbol
 
         for reactionid in sr.successors(me):
             if sr[me][reactionid]["type"] == "reactant":
