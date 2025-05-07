@@ -67,6 +67,7 @@ class VertexType (Enum):
 class CRNGraph:
 
     def __init__(self, sbml_mdl):
+        sbml_mdl = libsbml.readSBML(sbml_mdl).getModel()
 
 
         self.sr = nx.DiGraph() #specie-reaction graph
@@ -198,8 +199,8 @@ class CRNGraph:
 
 
 
-        for expr in exprs:
-            print (expr)
+        for specieid,expr in zip(self.species.keys(),exprs):
+            print (f"{specieid}:", expr)
 
     def generateODEs(self):
         exprs = []
@@ -214,6 +215,8 @@ class CRNGraph:
         ssymb,sval = zip (*[(str(specie.symbol)[1:], specie.val) for specie in self.species.values()])
         ssymb, sval = list(ssymb), list(sval)
         variables = {}
+
+
         for rule in self.rules["rate"].values():
             print ("Found rateOf rule concerning ", rule.getVariable())
             var = entities[rule.getVariable()]
@@ -230,7 +233,13 @@ class CRNGraph:
         snames = [specie.getId() for specie in self.species.values()]
         psymb, pval, pnames = [], [], []
         vsymb, vval, vnames = [], [], []
+
+
+        #total assignment (species + params)
+        assignment = {specie.symbol:specie.val for specie in self.species.values()}
+
         for param in self.listParameters():
+            assignment[param.symbol] = param.val
             if not param.symbol in variables:
                 psymb.append(str(param.symbol)[1:])
                 pval.append (param.val)
@@ -242,14 +251,22 @@ class CRNGraph:
                 
 
         odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
-        y0 = jnp.array(sval+vval, dtype=jnp.float64)
-        y0dict = dict (zip(ssymb+vsymb, y0))
-        _, mky0 = ravel_pytree(y0dict)
+        #y0 = jnp.array(sval+vval, dtype=jnp.float64) #TODO
+        #y0dict = dict (zip(ssymb+vsymb, y0))
+        y0names = {specie.getId():specie.val for specie in self.species.values()}
+        y0dict = {str(specie.symbol)[1:]:specie.val for specie in self.species.values()}
+        y0, mky0 = ravel_pytree(y0dict)
+        print(y0names)
 
 
         dict_function = lambda y, params: mky0(y) | params
         self.odes = lambda y, params: cast_to_float64(jnp.stack(odes(**dict_function(y,params))))
-        return self.odes, y0,  dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames))
+        self.symbolic_odes = exprs
+
+    
+
+
+        return self.odes, y0,  dict(zip (psymb, jnp.array(pval, dtype=jnp.float64))), dict(zip(psymb, pnames)), assignment
     
     @partial(jax.jit, static_argnames=["self","ode_solver", "n_step"])
     def adjust(self, y0, p0, ts, target, n_step=10, ode_solver=Kvaerno5(), ode_max_steps=4096):

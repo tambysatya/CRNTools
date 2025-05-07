@@ -5,8 +5,10 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 from functools import partial
 import diffrax
-from diffrax import diffeqsolve, ODETerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler
+from diffrax import diffeqsolve, ODETerm,MultiTerm, Kvaerno3, Kvaerno4, Kvaerno5, SaveAt, PIDController, ImplicitEuler, KenCarp5
 from initial_conditions import *
+
+from sksundae.cvode import CVODE
 
 @partial(jax.jit, static_argnums=[0,4,5])
 def computeTrajectoryWithSolverTs(odes, y0,p0, ts, solver, max_steps=4096):
@@ -57,12 +59,15 @@ def computeTrajectoryWithSolver(odes,y0,p0,ts,solver,max_steps=4096):
 
 @partial(jax.jit, static_argnums=[0,4,5])
 def computeTrajectoryUntilSteadyState_(odes, y0, p0, tmax, solver, max_steps=4096):
-    cond_fn = diffrax.steady_state_event()
+    cond_fn = diffrax.steady_state_event(atol=0)
     event = diffrax.Event(cond_fn)
-    stepsize_controller = PIDController(rtol=1e-3, atol=1e-6, pcoeff=0.1, icoeff=0.2, dcoeff=0)
+    stepsize_controller = PIDController(rtol=1e-8,
+                                        atol=0, #1e-8, 
+                                        pcoeff=0.2, icoeff=0.4, dcoeff=0)
     saveat = SaveAt(t0=True,t1=True, steps=True)
+    nonstif = ODETerm(lambda t, y, args: jnp.zeros(y0.shape))
     function = ODETerm(lambda t,y,args: odes(y, args))
-    sol = diffeqsolve(function, solver, t0=0, t1=tmax, dt0=None,
+    sol = diffeqsolve(MultiTerm(nonstif,function), solver, t0=0, t1=tmax, dt0=None,
                       y0=y0, 
                       saveat=saveat,
                       stepsize_controller=stepsize_controller,
@@ -117,6 +122,23 @@ def computeTrajectoriesUntilSteadyState(odes, y0, p0, tmax, solver,a,b,c,key=ran
     return ret, y0s, nkey
 
 
+def cvode (odes, y0, p0, tmax):
+    def rhs(t,y,ydot):
+        ret = odes(y,p0)
+        for i in range(len(y)):
+            ydot[i] = ret[i]
+    solver = CVODE(rhs)
+    sol = solver.solve(list(range(tmax)), y0)
+    return sol
 
+def cvode_(odes, y0, tmax):
+    def rhs(t,y,ydot):
+        ret = odes(*y)
+        for i in range(len(ret)):
+            ydot[i]=ret[i]
+
+    solver = CVODE(rhs)
+    sol = solver.solve(list(range(tmax)), y0)
+    return sol
 
 

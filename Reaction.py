@@ -35,7 +35,8 @@ class Reaction(libsbml.Reaction):
             parameter = Parameter(param)
             self.localparameters[param.getId()] = parameter
             localsymbs[sp.Function(parameter.getId())()] = parameter.symbol
-        if not isinstance(self.symbolic_formula, numbers.Number):
+        if (not isinstance(self.symbolic_formula, numbers.Number)) and localsymbs != {}:
+            print ("Reaction ",self.getId(), ": substituting local parameters: ", list(localsymbs.keys()))
             self.symbolic_formula = self.symbolic_formula.subs(localsymbs)
         self.expandFunctions(functions)
         self.expandFunctions(assignmentrules)

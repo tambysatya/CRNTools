@@ -10,6 +10,7 @@ let
   diffrax = pkgs.callPackage ./diffrax.nix {pkgs=pkgs;};
   wadler-lindig = pkgs.callPackage ./wadler-lindig.nix {pkgs=pkgs;};
   sympy2jax= pkgs.callPackage ./sympy2jax.nix {pkgs=pkgs;};
+#  scikits-odes= pkgs.callPackage ./scikits-odes.nix {lib=pkgs.lib; pkgs=pkgs;};
 in pkgs.mkShell {
   buildInputs = [
     pkgs.zlib
@@ -39,7 +40,16 @@ in pkgs.mkShell {
     wadler-lindig
     diffrax
     sympy2jax
+
+
+#    scikits-odes
    
+
+    #pkgs.nvfortran
+    #pkgs.pgfortran
+    #pkgs.ifort
+    #pkgs.ifx
+    #pkgs.g95
 
 
 

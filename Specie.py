@@ -49,5 +49,5 @@ class Specie (libsbml.Species):
                 coef = sr[me][reactionid]["stoichiometry"]
                 expr -= coef*reaction.symbolic_formula
 
-        return expr / vi.symbol
+        return expr  / vi.symbol
     
