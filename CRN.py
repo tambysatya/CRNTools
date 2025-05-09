@@ -64,10 +64,11 @@ class VertexType (Enum):
     SPECIE=0
     REACTION=1
 
-class CRNGraph:
+class CRNGraph (libsbml.Model):
 
     def __init__(self, sbml_mdl):
         sbml_mdl = libsbml.readSBML(sbml_mdl).getModel()
+        super().__init__(sbml_mdl)
 
 
         self.sr = nx.DiGraph() #specie-reaction graph
@@ -94,7 +95,7 @@ class CRNGraph:
             self.parameters[param.getId()] = Parameter(param)
 
         for specie in sbml_mdl.getListOfSpecies():
-            s = Specie(specie)
+            s = Specie(specie, self.compartments)
             specieid = s.getId()
             self.sr.add_node(specieid, bipartite=VertexType.SPECIE)
             if specie.getBoundaryCondition() or specie.getConstant():
@@ -212,8 +213,12 @@ class CRNGraph:
             exprs.append(expr)
         entities = {entitie.getId():entitie for entitie in list(self.species.values())+self.listParameters()}
         self.initializesEntities(entities.values())
-        ssymb,sval = zip (*[(str(specie.symbol)[1:], specie.val) for specie in self.species.values()])
-        ssymb, sval = list(ssymb), list(sval)
+
+        if len(self.species) > 0:
+            ssymb,sval = zip (*[(str(specie.symbol)[1:], specie.val) for specie in self.species.values()])
+            ssymb, sval = list(ssymb), list(sval)
+        else: #no species, only variable parameters
+            ssymb, sval = [],[]
         variables = {}
 
 

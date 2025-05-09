@@ -62,7 +62,7 @@ def computeTrajectoryUntilSteadyState_(odes, y0, p0, tmax, solver, max_steps=409
     cond_fn = diffrax.steady_state_event(atol=0)
     event = diffrax.Event(cond_fn)
     stepsize_controller = PIDController(rtol=1e-8,
-                                        atol=0, #1e-8, 
+                                        atol=1e-8, 
                                         pcoeff=0.2, icoeff=0.4, dcoeff=0)
     saveat = SaveAt(t0=True,t1=True, steps=True)
     nonstif = ODETerm(lambda t, y, args: jnp.zeros(y0.shape))

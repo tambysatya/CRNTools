@@ -11,16 +11,19 @@ import jax.numpy as jnp
 
 
 class Specie (libsbml.Species):
-    def __init__ (self, specie):
+    def __init__ (self, specie, compartments):
         super().__init__(specie)
         self.symbol = sympy.Dummy()
 
+        self.isConcentration = False
         
         if specie.isSetInitialConcentration():
             self.val = specie.getInitialConcentration()
+            self.isConcentration = True
             print (f"{self.getId()}: initial concentration is {self.val}")
         elif specie.isSetInitialAmount():
-            self.val = specie.getInitialAmount()
+            vi = compartments[self.getCompartment()]
+            self.val = specie.getInitialAmount()/vi.getVolume()
             print (f"{self.getId()}: initial amount is {self.val}")
         else:
             print ("WARNING: ", self.getId(), " has no initial amount nor concentration")
@@ -36,12 +39,14 @@ class Specie (libsbml.Species):
                 reaction = reactions[reactionid]
                 coef = sr[reactionid][me]["stoichiometry"]#
                 term = coef*reaction.symbolic_formula
-                if reaction.getNumReactants() > 0:
+                if reaction.getNumReactants() > 0 and len(compartments) > 1:
                     reactantid = reaction.getReactant(0).getSpecies()
                     reactant = species[reactantid]
                     compartment = compartments[reactant.getCompartment()]
+                    print ("multiple compartments => multiplying by vj")
+                    expr += term*compartment.symbol
+                else:
                     expr += term
-                    #expr += term*compartment.symbol
 
         for reactionid in sr.successors(me):
             if sr[me][reactionid]["type"] == "reactant":
@@ -49,5 +54,8 @@ class Specie (libsbml.Species):
                 coef = sr[me][reactionid]["stoichiometry"]
                 expr -= coef*reaction.symbolic_formula
 
-        return expr  / vi.symbol
+        if self.isConcentration:
+            return expr
+        else:
+           return expr  / vi.symbol
     
