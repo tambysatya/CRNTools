@@ -70,6 +70,9 @@ class CRNGraph (libsbml.Model):
         sbml_mdl = libsbml.readSBML(sbml_mdl).getModel()
         super().__init__(sbml_mdl)
 
+        if self.getNumEvents() > 0:
+            raise ValueError ("Events found.")
+
 
         self.sr = nx.DiGraph() #specie-reaction graph
 
@@ -83,6 +86,7 @@ class CRNGraph (libsbml.Model):
 
         self.initialassignments = {}
         for initialassignment in sbml_mdl.getListOfInitialAssignments():
+            print ("found initial assignment")
             self.initialassignments[initialassignment.getSymbol()] = initialassignment
  
         for compartment in sbml_mdl.getListOfCompartments():
@@ -109,6 +113,7 @@ class CRNGraph (libsbml.Model):
             elif rule.isAlgebraic():
                 self.rules["algebraic"][rule.getIdAttribute()]=Rule(rule)
                 print ("[Warning] algebraic rule found.")
+                raise ("Algebraic rule found")
             elif rule.isRate():
                 self.rules["rate"][rule.getIdAttribute()]=Rule(rule)
             else:
@@ -223,11 +228,11 @@ class CRNGraph (libsbml.Model):
 
 
         for rule in self.rules["rate"].values():
-            print ("Found rateOf rule concerning ", rule.getVariable())
             var = entities[rule.getVariable()]
             variables[var.symbol] = var.getId()
 
             expr = parse_expr(rule.getMath())
+            print ("Found rateOf rule concerning ", rule.getVariable(), "=", expr)
 
             # application of functions and assignment rules
             expr = self._expandFunctions(self.functions, expr)
@@ -256,10 +261,11 @@ class CRNGraph (libsbml.Model):
                 
 
         odes = cast_module_to_float64(sympy2jax.SymbolicModule(exprs))
-        #y0 = jnp.array(sval+vval, dtype=jnp.float64) #TODO
-        #y0dict = dict (zip(ssymb+vsymb, y0))
-        y0names = {specie.getId():specie.val for specie in self.species.values()}
-        y0dict = {str(specie.symbol)[1:]:specie.val for specie in self.species.values()}
+        y0 = jnp.array(sval+vval, dtype=jnp.float64) #TODO
+        y0dict = dict (zip(ssymb+vsymb, y0))
+        y0names = {specie.getId():specie.val for specie in self.species.values()} | {vsymb:vval for vsymb, vval in zip (vnames, vval)}
+        #y0names = {specie.getId():specie.val for specie in self.species.values()}
+        #y0dict = {str(specie.symbol)[1:]:specie.val for specie in self.species.values()}
         y0, mky0 = ravel_pytree(y0dict)
         print(y0names)
 

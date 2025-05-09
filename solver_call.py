@@ -67,7 +67,8 @@ def computeTrajectoryUntilSteadyState_(odes, y0, p0, tmax, solver, max_steps=409
     saveat = SaveAt(t0=True,t1=True, steps=True)
     nonstif = ODETerm(lambda t, y, args: jnp.zeros(y0.shape))
     function = ODETerm(lambda t,y,args: odes(y, args))
-    sol = diffeqsolve(MultiTerm(nonstif,function), solver, t0=0, t1=tmax, dt0=None,
+    #sol = diffeqsolve(MultiTerm(nonstif,function), solver, t0=0, t1=tmax, dt0=None,
+    sol = diffeqsolve(function, solver, t0=0, t1=tmax, dt0=None,
                       y0=y0, 
                       saveat=saveat,
                       stepsize_controller=stepsize_controller,
